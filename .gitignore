@@ -1,0 +1,16 @@
+# Node / TypeScript / VS Code extension build artifacts
+node_modules/
+out/
+dist/
+.vscode-test/
+*.vsix
+
+# Staged language-server binary (copied in by scripts/prepare-server.mjs before
+# packaging or integration tests; a build artifact, never committed)
+server/
+
+# mdBook build output
+book/build/
+
+# Rust build output (if a sibling crate checkout is ever present)
+**/target

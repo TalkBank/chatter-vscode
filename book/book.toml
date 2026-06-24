@@ -1,0 +1,21 @@
+[book]
+title = "TalkBank CHAT Editor (VS Code)"
+authors = ["TalkBank Contributors"]
+description = "User and developer documentation for the TalkBank CHAT Editor VS Code extension, the editor front end for the chatter CHAT toolchain and the talkbank-lsp language server."
+language = "en"
+src = "src"
+
+[build]
+build-dir = "build"
+create-missing = false
+
+[preprocessor.mermaid]
+command = "mdbook-mermaid"
+
+[output.html]
+git-repository-url = "https://github.com/TalkBank/chatter-vscode"
+edit-url-template = "https://github.com/TalkBank/chatter-vscode/edit/main/book/{path}"
+# Served from https://talkbank.github.io/chatter-vscode/ when Pages is enabled;
+# site-url makes absolute in-book links resolve under the subpath.
+site-url = "/chatter-vscode/"
+additional-js = ["mermaid.min.js", "mermaid-init.js"]

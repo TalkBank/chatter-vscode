@@ -1,0 +1,137 @@
+name: VS Code Extension Release
+
+# Builds the five platform-specific VSIX files and publishes them as a GitHub
+# Release. Each VSIX bundles the matching prebuilt `talkbank-lsp` language
+# server downloaded from the chatter release pinned in CHATTER_LSP_VERSION, so
+# the installed extension needs no PATH binary.
+#
+# Trigger: push a `vX.Y.Z` tag matching the package.json version, or run
+# manually (optionally overriding which chatter release supplies talkbank-lsp).
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      lsp_version:
+        description: 'chatter release tag to source talkbank-lsp from (default: pinned CHATTER_LSP_VERSION)'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  # The chatter release that provides the per-platform talkbank-lsp binaries.
+  # Bump this when adopting a newer language server.
+  CHATTER_LSP_VERSION: v0.2.1
+
+jobs:
+  package:
+    name: Package ${{ matrix.vsce_target }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - vsce_target: darwin-arm64
+            lsp_target: aarch64-apple-darwin
+            archive: tar.xz
+          - vsce_target: darwin-x64
+            lsp_target: x86_64-apple-darwin
+            archive: tar.xz
+          - vsce_target: linux-x64
+            lsp_target: x86_64-unknown-linux-musl
+            archive: tar.xz
+          - vsce_target: linux-arm64
+            lsp_target: aarch64-unknown-linux-musl
+            archive: tar.xz
+          - vsce_target: win32-x64
+            lsp_target: x86_64-pc-windows-msvc
+            archive: zip
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download talkbank-lsp from the chatter release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # User input is routed through env and shape-validated below, never
+          # interpolated straight into the shell.
+          LSP_VERSION: ${{ inputs.lsp_version || env.CHATTER_LSP_VERSION }}
+          LSP_TARGET: ${{ matrix.lsp_target }}
+          ARCHIVE: ${{ matrix.archive }}
+        run: |
+          set -euo pipefail
+          case "$LSP_VERSION" in
+            v[0-9]*) : ;;
+            *) echo "Invalid LSP_VERSION (expected vX.Y.Z): $LSP_VERSION" >&2; exit 1 ;;
+          esac
+          asset="talkbank-lsp-${LSP_TARGET}.${ARCHIVE}"
+          gh release download "$LSP_VERSION" --repo TalkBank/chatter --pattern "$asset" --dir lsp-dl
+          mkdir -p lsp-bin
+          if [ "$ARCHIVE" = zip ]; then
+            unzip -o "lsp-dl/$asset" -d lsp-bin
+          else
+            tar -xf "lsp-dl/$asset" -C lsp-bin
+          fi
+
+      - name: Stage the server binary into the extension
+        env:
+          VSCE_TARGET: ${{ matrix.vsce_target }}
+        run: |
+          set -euo pipefail
+          if [ "$VSCE_TARGET" = win32-x64 ]; then
+            bin="$(find lsp-bin -type f -name 'talkbank-lsp.exe' -print -quit)"
+            node scripts/prepare-server.mjs --source "$bin" --windows
+          else
+            bin="$(find lsp-bin -type f -name 'talkbank-lsp' -print -quit)"
+            node scripts/prepare-server.mjs --source "$bin"
+          fi
+
+      - name: Package VSIX
+        env:
+          VSCE_TARGET: ${{ matrix.vsce_target }}
+        run: npm run "package:${VSCE_TARGET}"
+
+      - name: Upload VSIX artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: vsix-${{ matrix.vsce_target }}
+          path: '*.vsix'
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    needs: package
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - name: Download all VSIX artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: vsix
+          merge-multiple: true
+
+      - name: Create the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh release create "$TAG" vsix/*.vsix \
+            --repo "$REPO" \
+            --title "TalkBank CHAT for VS Code $TAG" \
+            --notes "Per-platform VSIX builds. Each bundles the talkbank-lsp ${CHATTER_LSP_VERSION} language server for its platform, so no PATH setup is needed. Install the VSIX matching your OS and architecture."

@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Book toolchain, pinned to the same versions the chatter book uses so the two
+# books render identically. Bump in lockstep when the chatter repo bumps.
+env:
+  MDBOOK_VERSION: 0.5.3
+  MDBOOK_MERMAID_VERSION: 0.17.0
+  LYCHEE_VERSION: 0.24.2
+
+jobs:
+  extension:
+    name: Extension (compile, lint, test, bundle)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Compile (tsc + copy webview assets)
+        run: npm run compile
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Unit tests (vitest)
+        run: npm test
+
+      # Build the shipped artifact: the esbuild production bundle is what every
+      # packaged VSIX actually loads, so CI must prove it bundles.
+      - name: Bundle (esbuild, production)
+        run: npm run bundle -- --production
+
+  book:
+    name: mdBook build + link-check
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry + target (book tooling)
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: book-job
+
+      - name: Install mdbook + mdbook-mermaid + lychee
+        run: |
+          cargo install \
+            mdbook@"${MDBOOK_VERSION}" \
+            mdbook-mermaid@"${MDBOOK_MERMAID_VERSION}" \
+            lychee@"${LYCHEE_VERSION}" \
+            --locked
+
+      - name: mdbook build
+        run: cd book && mdbook build
+
+      # The generated 404 page intentionally uses absolute site-url links that
+      # only resolve when served at the deploy root, so it is excluded offline.
+      - name: Link-check book (lychee, offline)
+        run: |
+          lychee --offline \
+            --root-dir "${GITHUB_WORKSPACE}/book/build" \
+            --exclude-path "${GITHUB_WORKSPACE}/book/build/404.html" \
+            "${GITHUB_WORKSPACE}/book/build"

@@ -1,0 +1,28 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "commonjs",
+    "lib": ["ES2020", "DOM"],
+    // Declare the ambient type packages explicitly instead of relying on
+    // TypeScript's automatic inclusion of every node_modules/@types/*.
+    // Auto-inclusion is fragile: after the 2026-06-13 dependency bumps
+    // (vscode-languageclient 10, vitest/vite majors), tsc silently stopped
+    // discovering @types/node, dropping all Node globals (fs, path, Buffer,
+    // NodeJS) and failing the build with TS2591. Pinning the list to what
+    // the extension actually depends on (Node runtime + the `vscode` module
+    // declaration) makes the build deterministic regardless of which
+    // transitive @types a future bump pulls in.
+    "types": ["node", "vscode"],
+    "outDir": "./out",
+    "rootDir": "./src",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "declaration": true,
+    "sourceMap": true
+  },
+  "include": ["src"],
+  "exclude": ["node_modules"]
+}
