@@ -24,7 +24,7 @@ permissions:
 env:
   # The chatter release that provides the per-platform talkbank-lsp binaries.
   # Bump this when adopting a newer language server.
-  CHATTER_LSP_VERSION: v0.2.1
+  CHATTER_LSP_VERSION: v0.18.0
 
 jobs:
   package:

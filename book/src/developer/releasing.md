@@ -23,7 +23,7 @@ release workflow downloads the matching per-platform binary from a pinned
 chatter release:
 
 - The pinned version lives in `vscode-release.yml` as `CHATTER_LSP_VERSION`
-  (currently `v0.2.1`).
+  (currently `v0.18.0`).
 - Each VSIX target maps to a chatter Rust target, for example
   `darwin-arm64` to `talkbank-lsp-aarch64-apple-darwin.tar.xz`.
 - To adopt a newer language server, bump `CHATTER_LSP_VERSION` and re-release.
