@@ -1,232 +1,96 @@
 # Custom LSP RPC Contracts
 
 **Status:** Current
-**Last modified:** 2026-05-29 17:31 EDT
+**Last modified:** 2026-11-13
 
-The extension drives twelve custom `workspace/executeCommand` endpoints
-exposed by [`talkbank-lsp`][lsp]. This page is the per-endpoint reference:
-command identifier, request shape, response shape, TS caller, Rust
-handler. Everything here is verified against the current source on
-both sides, if an endpoint's behavior drifts, update this page in
-the same commit.
+The active client consumes nine custom `workspace/executeCommand` endpoints
+from Chatter's standalone `talkbank-lsp`. `src/lsp/executeCommandClient.ts`
+owns their closed command list and typed facade. Runtime responses are decoded
+by `src/lsp/executeCommandPayloads.ts` before feature code consumes them.
 
-[lsp]: https://github.com/TalkBank/chatter/tree/main/crates/talkbank-lsp
-
-## One typical call at runtime
+## Request and response ownership
 
 ```mermaid
-%% Verified against: src/lsp/executeCommandClient.ts,
-%% crates/talkbank-lsp/src/backend/requests/execute_command.rs,
-%% crates/talkbank-lsp/src/backend/execute_commands.rs.
 sequenceDiagram
-    participant TS as TS feature (e.g. analysis.ts)
-    participant Client as TalkbankExecuteCommandClient
-    participant LSP as tower-lsp dispatcher
-    participant Decoder as ExecuteCommandRequest::parse
-    participant Handler as feature handler (Rust)
-
-    TS->>Client: executeStructured("talkbank/analyze", [payload])
-    Client->>LSP: workspace/executeCommand JSON-RPC
-    LSP->>Decoder: parse(params)
-    Decoder-->>LSP: typed ExecuteCommandRequest::Analyze(...)
-    LSP->>Handler: handle_analyze(&request)
-    Handler-->>LSP: Result<serde_json::Value, LspBackendError>
-    LSP-->>Client: JSON response (or stringified error)
-    Client->>TS: decoded payload via Effect Schema
+    participant Feature as Editor feature
+    participant Client as Typed command client
+    participant Server as talkbank-lsp
+    participant Model as Chatter model
+    Feature->>Client: showDependencyGraph(uri, position)
+    Client->>Server: workspace/executeCommand
+    Server->>Model: current document analysis
+    Model-->>Server: tiers and alignment evidence
+    Server-->>Client: dot or unavailable response
+    Client-->>Feature: decoded discriminated result
 ```
 
-Twelve endpoints grouped by handler family.
+The graph response is `{kind: "dot", source: string}` or
+`{kind: "unavailable", reason: string}`. The feature handles these variants
+before opening Graphviz presentation.
 
-## Documents family
+## Current endpoint surface
 
-### `talkbank/showDependencyGraph`
+| Command | Arguments | Consumed result |
+| --- | --- | --- |
+| `talkbank/showDependencyGraph` | URI, LSP position | `dot` or `unavailable` union |
+| `talkbank/getAlignmentSidecar` | URI | Alignment envelope and utterance timing subset |
+| `talkbank/getParticipants` | URI | Participant-entry list |
+| `talkbank/formatIdLine` | `IdLineFields` | Formatted header string |
+| `talkbank/getSpeakers` | URI | Speaker-info list |
+| `talkbank/filterDocument` | `{uri, speakers}` | Filtered transcript string |
+| `talkbank/getUtterances` | URI | Utterance-info list |
+| `talkbank/formatBulletLine` | `{prev_ms, current_ms, speaker}` | Formatted line and cursor data |
+| `talkbank/scopedFind` | `ScopedFindRequest` | Match list |
 
-Generate a Graphviz DOT dependency graph for the utterance at a cursor
-position.
+The current server registers the same names from its closed
+`ExecuteCommandName` enum. The real VS Code host journey checks their
+registration through `vscode-languageclient` and consumes graph and sidecar
+responses from the selected executable. A fixture comparison within the
+TypeScript suite checks the client declaration independently.
 
-| | |
-|---|---|
-| Rust request | `DocumentPositionRequest { uri: Url, position: Position }` in `backend/execute_commands.rs` |
-| Rust handler | `graph::build_dependency_graph_response(utterance, parse_state)` in `crates/talkbank-lsp/src/graph/mod.rs` |
-| Rust response | `DependencyGraphResponse::Dot { source } \| Unavailable { reason }` |
-| TS caller | `executeCommandClient.getDependencyGraph` (or similar, see `graphPanel.ts`) |
-| TS response type | `DependencyGraphResponse` (Effect Schema discriminated union) in `lsp/executeCommandPayloads.ts` |
+## Document and edit boundaries
 
-Request layout: argument position `0` is the document URI, position `1`
-is the cursor as `{ line, character }`. See the [Cross-Tier
-Alignment](../navigation/alignment.md) and [Dependency
-Graphs](../navigation/dependency-graphs.md) pages for user-facing
-behavior; the DOT output includes a `stale baseline` header label when
-the backend is serving a stale-baseline parse (see
-[`developer/architecture.md`](../developer/architecture.md)).
+URI-only requests operate on the server's current synchronized buffer. Standard
+positions use UTF-16 coordinates. Graphs and sidecars describe a document
+snapshot, and callers must account for edits while their requests are pending.
+The current graph/media UI has no explicit response revision identity, so
+stale presentation during such edits remains a qualification question.
 
-### `talkbank/getAlignmentSidecar`
+The speaker filter opens a separate document containing the returned text.
+Formatting, quick fixes and rename use the standard LSP editing interfaces.
+The server admits writer operations against its document and parse-health
+contracts. Review returned edits before saving.
 
-Produce the alignment-sidecar payload for one document, a JSON view
-of every utterance's `AlignmentSet` usable by the extension's alignment
-overlays.
+## Composed analysis methods
 
-| | |
-|---|---|
-| Rust request | `DocumentUriRequest { uri: Url }` |
-| Rust handler | `build_alignment_sidecar(&uri, text, &chat_file)` in `backend/requests/alignment_sidecar.rs` |
-| Rust response | `AlignmentSidecarDocument { schema_version, uri, utterances[] }` |
-| TS caller | `TalkbankExecuteCommandClient.getAlignmentSidecar` |
-| TS response type | `AlignmentSidecarDocument` in `lsp/executeCommandPayloads.ts` |
+`ClanClient` consumes typed custom methods on `chatter-clan-lsp`.
 
-`alignments.wor` on each utterance carries synthetic positional pairs
-`{source_index: i, target_index: i}` when the backing
-`WorTimingSidecar` is `Positional`, and is empty when it is `Drifted`
-or absent. See [alignment-indices.md](alignment-indices.md).
+| Method | Request | Response |
+| --- | --- | --- |
+| `clan/capabilities` | No parameters | Command names and required prompt kinds |
+| `clan/analyze` | `{target, analysis}` | `{data, sources}` |
+| `clan/databases` | `{directory}` | Available database metadata |
 
-## Analysis family
+A document target is `{kind: "document", uri, version}`. A directory target is
+`{kind: "directory", uri}`. Each analysis variant owns its required input, such
+as `second_file` for RELY and `template_file` for SCRIPT. The server rejects
+unknown commands and fields. Normative variants carry an optional `comparison`
+with a path and filter.
 
-### `talkbank/analyze`
+Each source identity carries its URI, editor version or explicit disk origin,
+and BLAKE3 source digest. The server consumes revision completion before
+responding. `ClanResult` binds editor sources to their dispatch-time document
+objects and versions and checks them at presentation. Cancellation uses the
+standard LSP request token. The bounded worker retains its permit until it exits.
 
-Run one CLAN analysis command (freq, mlu, kideval, …) and return JSON.
+## Errors and qualification
 
-| | |
-|---|---|
-| Rust request | `AnalyzeRequest` = `AnalyzeCommandPayload` (shared with `talkbank-clan`) |
-| Rust handler | `handle_analyze(&request)` in `backend/analysis.rs` |
-| Rust response | `serde_json::Value`, the analysis command's native JSON output |
-| TS caller | `TalkbankExecuteCommandClient.analyze(request)` |
-| TS request type | `AnalyzeCommandRequest` in `lsp/executeCommandPayloads.ts` |
+Transport and decoding failures have tagged error types. The shared presenter
+shows analysis transport, admission and decoding failures explicitly. A server-side unavailable graph
+is represented by the response union.
 
-Payload carries `command_name`, `target_uri`, and an `AnalysisOptions`
-struct with every per-command flag. See the
-[Command Reference](../analysis/command-reference.md) page for
-the command-name catalog.
-
-### `talkbank/kidevalDatabases` · `talkbank/evalDatabases`
-
-Discover normative databases in a CLAN library directory. Returns the
-same shape for both; the extension surfaces them in different UIs.
-
-| | |
-|---|---|
-| Rust request | `DiscoverDatabasesRequest { library_dir: PathBuf }` |
-| Rust handler | `handle_discover_databases(&request)` in `backend/analysis.rs` |
-| Rust response | `Vec<AvailableDatabase>` |
-| TS caller | `TalkbankExecuteCommandClient.kidevalDatabases` / `.evalDatabases` |
-| TS response type | `AvailableDatabase[]` in `lsp/executeCommandPayloads.ts` |
-
-## Participants family
-
-### `talkbank/getParticipants`
-
-Extract `@ID` participant entries from a document.
-
-| | |
-|---|---|
-| Rust request | `DocumentUriRequest { uri: Url }` |
-| Rust handler | `handle_get_participants(&backend, &request)` in `backend/participants.rs` |
-| Rust response | `Vec<ParticipantEntry>` |
-| TS caller | `TalkbankExecuteCommandClient.getParticipants` |
-| TS response type | `ParticipantEntry[]` |
-
-### `talkbank/formatIdLine`
-
-Format one `@ID` header line from field values. Pure formatting,
-does not touch a document.
-
-| | |
-|---|---|
-| Rust request | `IdLineFieldsRequest { language, corpus, speaker, age, sex, group, ses, role, education, custom }` |
-| Rust handler | `handle_format_id_line(&request)` in `backend/participants.rs` |
-| Rust response | `{ formatted: String }` |
-| TS caller | `TalkbankExecuteCommandClient.formatIdLine` |
-| TS request type | `IdLineFields` |
-
-## ChatOps family
-
-### `talkbank/getSpeakers`
-
-Extract declared speaker metadata from `@Participants`.
-
-| | |
-|---|---|
-| Rust request | `DocumentUriRequest { uri: Url }` |
-| Rust handler | `handle_get_speakers(&backend, &request)` in `backend/chat_ops/speakers.rs` |
-| Rust response | `Vec<SpeakerInfo>` |
-| TS caller | `TalkbankExecuteCommandClient.getSpeakers` |
-| TS response type | `SpeakerInfo[]` |
-
-### `talkbank/filterDocument`
-
-Filter a document down to selected speakers. Returns the filtered
-document text for use as a virtual document.
-
-| | |
-|---|---|
-| Rust request | `FilterDocumentRequest { uri: Url, speakers: Vec<String> }` |
-| Rust handler | `handle_filter_document(&backend, &request)` in `backend/chat_ops/filter_document.rs` |
-| Rust response | `{ text: String }` |
-| TS caller | `TalkbankExecuteCommandClient.filterDocument` |
-
-### `talkbank/getUtterances`
-
-Return utterance metadata used by coder mode (speaker, text, range).
-
-| | |
-|---|---|
-| Rust request | `DocumentUriRequest { uri: Url }` |
-| Rust handler | `handle_get_utterances(&backend, &request)` in `backend/chat_ops/utterances.rs` |
-| Rust response | `Vec<UtteranceInfo>` |
-| TS caller | `TalkbankExecuteCommandClient.getUtterances` |
-| TS response type | `UtteranceInfo[]` |
-
-### `talkbank/formatBulletLine`
-
-Format one timing-bullet insertion for the transcription mode's F4
-insertion key.
-
-| | |
-|---|---|
-| Rust request | `FormatBulletLineRequest { prev_ms, current_ms, speaker }` |
-| Rust handler | `handle_format_bullet_line(&request)` in `backend/chat_ops/format_bullet.rs` |
-| Rust response | `FormattedBulletLine { bullet, new_line }` |
-| TS caller | `TalkbankExecuteCommandClient.formatBulletLine` |
-| TS response type | `FormattedBulletLine` |
-
-### `talkbank/scopedFind`
-
-Execute semantically scoped search in one document (main tier only,
-all tiers, specific dependent tier, with optional regex).
-
-| | |
-|---|---|
-| Rust request | `ScopedFindRequest { uri, query, scope, speakers[], regex }` |
-| Rust handler | `handle_scoped_find(&backend, &request)` in `backend/chat_ops/scoped_find.rs` |
-| Rust response | `Vec<ScopedFindMatch>` |
-| TS caller | `TalkbankExecuteCommandClient.scopedFind` |
-| TS request type | `ScopedFindRequest` · TS response type `ScopedFindMatch[]` |
-
-## Error contract
-
-All handlers return `Result<serde_json::Value, LspBackendError>`.
-The dispatcher in `backend/requests/execute_command.rs` serializes
-successes to the JSON-RPC `result`; failures are returned as a
-string-valued result (one-field wire format) so the extension can
-render them inline even when no LSP Diagnostic applies. `LspBackendError`
-variants include `ArgumentMissing`, `ArgumentInvalid`, `InvalidUriParse`,
-`UriNotFilePath`, `DocumentNotFound`, `LanguageServicesUnavailable(BackendInitError)`,
-and the command-agnostic `ExternalServiceFailed { service, reason }`.
-
-The TS side wraps every call in three typed error classes:
-
-- `ExecuteCommandRequestError`: transport failed (disconnected, timeout)
-- `ExecuteCommandResponseError`: wrong payload shape
-- `ExecuteCommandServerError`: server returned a string-valued error
-
-See `src/lsp/executeCommandErrors.ts` for the tagged error
-family and [Webview Message Contracts](webview-contracts.md) for the
-panel-side decoding patterns.
-
-## Advertised command list
-
-The LSP advertises its twelve command names during `initialize` via
-`ExecuteCommandName::advertised_commands()`. A unit test in
-`backend/execute_commands.rs::tests` pins the list against the
-manifest so adding a command without updating the advertisement is a
-compile-and-test failure.
+Run the [host journey](../developer/testing.md) with an explicit server binary.
+Record the server hash/source identity and editor version. The journey covers
+client synchronization, a versioned repair and custom RPC consumption. Webview
+rendering, playback and multi-document responsiveness have their own observable
+acceptance boundaries.

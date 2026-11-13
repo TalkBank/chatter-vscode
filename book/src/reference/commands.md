@@ -54,13 +54,15 @@ those.
 
 ## CLAN analysis
 
+These handlers use the composed Rust server through `ClanClient`.
+
 | Command | Title | Handler |
-|---------|-------|---------|
-| `talkbank.runAnalysis` | Run CLAN Analysis… | `commands/analysis.ts` → `analysisPanel.ts` |
-| `talkbank.runAnalysisOnDirectory` | Run CLAN Analysis on Directory… | `commands/analysis.ts` |
-| `talkbank.runKideval` | Run KidEval… | `commands/analysis.ts` → `kidevalPanel.ts` |
-| `talkbank.runEval` | Run Eval… | `commands/analysis.ts` → `kidevalPanel.ts` |
-| `talkbank.runEvald` | Run Eval-D (Dementia)… | `commands/analysis.ts` → `kidevalPanel.ts` |
+| --- | --- | --- |
+| `talkbank.runAnalysis` | Run CLAN Analysis… | Command picker and result panel |
+| `talkbank.runAnalysisOnDirectory` | Run CLAN Analysis on Directory… | Directory picker and aggregate result |
+| `talkbank.runKideval` | Run KidEval… | Normative assessment panel |
+| `talkbank.runEval` | Run Eval… | Normative assessment panel |
+| `talkbank.runEvald` | Run Eval-D (Dementia)… | Normative assessment panel |
 
 ## Navigation
 
@@ -129,7 +131,7 @@ All 41 non-validation commands register through
 so failures become typed `Effect` errors rather than unhandled promise
 rejections, and the same effect value can compose with other features'
 effects without ad-hoc `try/catch` orchestration. See
-[Custom Commands](../developer/custom-commands.md#extension-side-command-runtime)
+[Custom Commands](../developer/custom-commands.md#typed-request-and-response-boundaries)
 for the shared rationale and the Validation Explorer exception.
 
 A **command-registration sanity test** (`src/activation/commands/__tests__/`)

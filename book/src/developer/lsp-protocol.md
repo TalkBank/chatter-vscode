@@ -11,14 +11,14 @@ advertised by `talkbank-lsp`. The capability set is declared in
 `backend/requests/` (request-dispatcher shims that pull out the
 parts of `Backend` each handler needs).
 
-The twelve custom `talkbank/*` commands (also advertised through this
+The nine custom `talkbank/*` commands (also advertised through this
 mechanism) have their own per-endpoint reference at
 [RPC Contracts](../reference/rpc-contracts.md); this chapter stays
 focused on the standard LSP surface.
 
 ## Advertised Capabilities
 
-The server advertises 23 standard LSP capabilities plus 12 custom commands.
+The server advertises 23 standard LSP capabilities plus 9 custom commands.
 
 ### Text Document Sync
 
@@ -58,7 +58,7 @@ The server advertises 23 standard LSP capabilities plus 12 custom commands.
 
 ### Execute Command
 
-The server advertises 12 custom commands via `workspace/executeCommand`
+The server advertises 9 custom commands via `workspace/executeCommand`
 (the `talkbank/*` family). Per-endpoint reference:
 [RPC Contracts](../reference/rpc-contracts.md). Architecture and
 sequence-diagram: [Custom Commands](custom-commands.md).
@@ -128,5 +128,5 @@ The server uses LSP diagnostic tags for visual de-emphasis:
 ## Related Chapters
 
 - [Architecture](architecture.md) -- overall system design
-- [Custom Commands](custom-commands.md) -- the 12 non-standard commands
+- [Custom Commands](custom-commands.md) -- the 9 non-standard commands
 - [Adding Features](adding-features.md) -- how to add a new capability

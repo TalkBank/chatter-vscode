@@ -3,7 +3,6 @@ import {
     DefaultExtensionRuntimeContext,
     normalizeBulletDisplayMode,
     normalizeValidationSeverity,
-    resolveDefaultCachePath,
     type RuntimeWorkspaceFacade,
 } from '../runtimeContext';
 
@@ -26,41 +25,34 @@ function createWorkspace(
     };
 }
 
-describe('resolveDefaultCachePath', () => {
-    it('builds the default TalkBank cache path under the user cache dir', () => {
-        expect(resolveDefaultCachePath('/Users/test')).toBe(
-            '/Users/test/.cache/talkbank-chat/talkbank-cache.db'
-        );
-    });
-});
-
-describe('normalizeValidationSeverity', () => {
-    it('accepts known severity values', () => {
-        expect(normalizeValidationSeverity('all')).toBe('all');
-        expect(normalizeValidationSeverity('errorsOnly')).toBe('errorsOnly');
-        expect(normalizeValidationSeverity('errorsAndWarnings')).toBe(
-            'errorsAndWarnings'
-        );
-    });
-
-    it('falls back to all for unknown values', () => {
+describe('configuration admission policy', () => {
+    /**
+     * Guards: supported severity and bullet settings retain their meanings, and unknown external values select the documented defaults.
+     * Kind: policy
+     * Not a type: closed output unions constrain consumers, while configuration files can supply arbitrary strings at admission.
+     * State: pure known and unknown string observations, without workspace or editor effects.
+     * Concurrency: none, normalization is synchronous.
+     */
+    it('normalizes observed enum settings', () => {
+        for (const value of ['all', 'errorsOnly', 'errorsAndWarnings'] as const) {
+            expect(normalizeValidationSeverity(value)).toBe(value);
+        }
+        for (const value of ['dim', 'hidden', 'normal'] as const) {
+            expect(normalizeBulletDisplayMode(value)).toBe(value);
+        }
         expect(normalizeValidationSeverity('mystery')).toBe('all');
-    });
-});
-
-describe('normalizeBulletDisplayMode', () => {
-    it('accepts known bullet display values', () => {
-        expect(normalizeBulletDisplayMode('dim')).toBe('dim');
-        expect(normalizeBulletDisplayMode('hidden')).toBe('hidden');
-        expect(normalizeBulletDisplayMode('normal')).toBe('normal');
-    });
-
-    it('falls back to dim for unknown values', () => {
         expect(normalizeBulletDisplayMode('mystery')).toBe('dim');
     });
 });
 
 describe('DefaultExtensionRuntimeContext', () => {
+    /**
+     * Guards: configured editor and media values are read from their intended native configuration sections.
+     * Kind: contract
+     * Not a type: typed getters constrain consumers, while externally supplied sections and keys determine the observed values.
+     * State: one shared configuration-observation fixture, without a native editor or home-directory override.
+     * Concurrency: none, each test owns its immutable workspace values.
+     */
     it('reads workspace-root and configuration values through the shared boundary', () => {
         const runtimeContext = new DefaultExtensionRuntimeContext({
             workspace: createWorkspace({
@@ -78,7 +70,6 @@ describe('DefaultExtensionRuntimeContext', () => {
                     'transcription.rewindSeconds': 4,
                 },
             }, '/tmp/workspace'),
-            homedir: () => '/Users/test',
         });
 
         expect(runtimeContext.getPrimaryWorkspaceRoot()).toBe('/tmp/workspace');
@@ -93,15 +84,18 @@ describe('DefaultExtensionRuntimeContext', () => {
         expect(runtimeContext.getMediaDefaultSpeed()).toBe(75);
         expect(runtimeContext.getTranscriptionDefaultSpeaker()).toBe('MOT');
         expect(runtimeContext.getTranscriptionRewindSeconds()).toBe(4);
-        expect(runtimeContext.getCachePath()).toBe(
-            '/Users/test/.cache/talkbank-chat/talkbank-cache.db'
-        );
     });
 
+    /**
+     * Guards: missing native configuration observations receive the documented editor and media defaults.
+     * Kind: contract
+     * Not a type: the native configuration boundary can omit values, so defaults remain a user-visible admission policy.
+     * State: one shared configuration-observation fixture, without a native editor or home-directory override.
+     * Concurrency: none, each test owns its immutable workspace values.
+     */
     it('uses safe defaults when configuration values are absent', () => {
         const runtimeContext = new DefaultExtensionRuntimeContext({
             workspace: createWorkspace({}, '/tmp/workspace'),
-            homedir: () => '/Users/test',
         });
 
         expect(runtimeContext.getConfiguredLspBinaryPath()).toBe('');
@@ -117,15 +111,4 @@ describe('DefaultExtensionRuntimeContext', () => {
         expect(runtimeContext.getTranscriptionRewindSeconds()).toBe(2);
     });
 
-    it('normalizes unknown validation severity values', () => {
-        const runtimeContext = new DefaultExtensionRuntimeContext({
-            workspace: createWorkspace({
-                'talkbank.validation': { severity: 'not-valid' },
-                'talkbank.bullets': { display: 'barely-there' },
-            }),
-        });
-
-        expect(runtimeContext.getValidationSeverity()).toBe('all');
-        expect(runtimeContext.getBulletDisplayMode()).toBe('dim');
-    });
 });

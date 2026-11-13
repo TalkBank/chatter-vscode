@@ -1,3 +1,4 @@
+import { ClanClient } from './lsp/clanClient';
 import * as vscode from 'vscode';
 import { LanguageClient } from 'vscode-languageclient/node';
 import { CacheManager } from './cacheManager';
@@ -9,16 +10,21 @@ import { registerReviewDecorations } from './activation/reviewDecorations';
 import { registerReviewStatusBarCleanup } from './commands/review';
 import { activateValidationExplorer } from './activation/validation';
 import { registerExtensionCommands } from './activation/commands';
-import { createExtensionCommandRunner } from './effectCommandRuntime';
+import { createExtensionCommandRunner, type ExtensionCommandRunner } from './effectCommandRuntime';
 import { TalkbankExecuteCommandClient } from './lsp/executeCommandClient';
 import { createExtensionRuntimeServices } from './runtimeServices';
 
-let activeClient: LanguageClient | undefined;
+type ExtensionSession =
+    | { readonly kind: 'inactive' }
+    | { readonly kind: 'client'; readonly client: LanguageClient }
+    | { readonly kind: 'running'; readonly client: LanguageClient; readonly runner: ExtensionCommandRunner };
+let session: ExtensionSession = { kind: 'inactive' };
 
 export async function activate(context: vscode.ExtensionContext) {
     console.log('TalkBank extension activated');
 
     const runtimeServices = createExtensionRuntimeServices(vscode.workspace);
+    const subscriptionStart = context.subscriptions.length;
     const client = await activateLanguageServer(context, {
         ...runtimeServices,
         workspace: vscode.workspace,
@@ -27,50 +33,69 @@ export async function activate(context: vscode.ExtensionContext) {
         // Every feature below depends on a live language client.
         return;
     }
-    activeClient = client;
-    const commandClient = new TalkbankExecuteCommandClient(client);
-    context.subscriptions.push(...registerBulletDecorations(runtimeServices.runtimeContext));
-    context.subscriptions.push(...registerReviewDecorations());
-    context.subscriptions.push(registerReviewStatusBarCleanup());
-    context.subscriptions.push(
-        ...activateValidationExplorer({
+    session = { kind: 'client', client };
+    try {
+        const commandClient = new TalkbankExecuteCommandClient(client);
+        context.subscriptions.push(...registerBulletDecorations(runtimeServices.runtimeContext));
+        context.subscriptions.push(...registerReviewDecorations());
+        context.subscriptions.push(registerReviewStatusBarCleanup());
+        context.subscriptions.push(
+            ...activateValidationExplorer({
+                ...runtimeServices,
+                window: vscode.window,
+                commands: vscode.commands,
+            }).disposables
+        );
+
+        const cacheManager = CacheManager.start({
             ...runtimeServices,
             window: vscode.window,
-            commands: vscode.commands,
-        }).disposables
-    );
-
-    const cacheManager = new CacheManager({
-        ...runtimeServices,
-        window: vscode.window,
-        statusBarItem: vscode.window.createStatusBarItem(
-            'talkbank.cache-stats',
-            vscode.StatusBarAlignment.Right,
-            100,
-        ),
-    });
-    cacheManager.initialize();
-    const clanIntegration = new ClanIntegration({
-        ...runtimeServices,
-        window: vscode.window,
-    });
-    context.subscriptions.push(cacheManager);
-    const services = {
-        ...runtimeServices,
-        client,
-        commands: commandClient,
-        cacheManager,
-        clanIntegration,
-    };
-    const runner = createExtensionCommandRunner(context, services);
-    context.subscriptions.push(
-        ...registerExtensionCommands(context, services, runner),
-    );
+            statusBarItem: vscode.window.createStatusBarItem(
+                'talkbank.cache-stats',
+                vscode.StatusBarAlignment.Right,
+                100,
+            ),
+        });
+        context.subscriptions.push(cacheManager);
+        const clanIntegration = new ClanIntegration({
+            ...runtimeServices,
+            window: vscode.window,
+        });
+        const clanClient = new ClanClient(client, () => vscode.workspace.textDocuments);
+        const services = {
+            clanClient,
+            ...runtimeServices,
+            client,
+            commands: commandClient,
+            cacheManager,
+            clanIntegration,
+        };
+        const runner = createExtensionCommandRunner(context, services);
+        session = { kind: 'running', client, runner };
+        context.subscriptions.push(
+            ...registerExtensionCommands(context, services, runner),
+        );
+        return { clan: clanClient };
+    } catch (error) {
+        try { await deactivate(); }
+        finally {
+            for (const disposable of context.subscriptions.splice(subscriptionStart).reverse()) { disposable.dispose(); }
+        }
+        throw error;
+    }
 }
 
-export function deactivate(): Thenable<void> | undefined {
-    disposeSpecialChars();
-    const client = activeClient;
-    activeClient = undefined;
-    return client?.stop();
+export async function deactivate(): Promise<void> {
+    const owned = session;
+    session = { kind: 'inactive' };
+    try { disposeSpecialChars(); }
+    finally {
+        switch (owned.kind) {
+            case 'inactive': break;
+            case 'client': await owned.client.stop(); break;
+            case 'running':
+                try { await owned.runner.dispose(); }
+                finally { await owned.client.stop(); }
+        }
+    }
 }

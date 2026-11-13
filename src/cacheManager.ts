@@ -1,31 +1,16 @@
-import * as fs from 'fs';
-import * as path from 'path';
 
-import { CacheStatisticsManager } from './models/cacheStatistics';
+import { CacheStatisticsManager, type CacheStatistics } from './models/cacheStatistics';
 import type { ExtensionRuntimeServices } from './runtimeServices';
 import { findProjectRoot, type ProjectSearchResult } from './utils/projectLocator';
 
 type Awaitable<T> = T | PromiseLike<T>;
 
-/**
- * Cache statistics retrieved from the cache database
- */
-interface CacheStats {
-    cacheSize: string;  // e.g., "5.2 MB"
-    totalEntries: number;
-    validEntries: number;
-    invalidEntries: number;
-    expiredEntries: number;
-    cacheHitRate: number; // percentage
-    lastUpdated: string;  // ISO date string
-}
-
 export interface CacheManagerStatusBarItem {
     text: string;
     tooltip?: unknown;
     command?: unknown;
-    show(...args: any[]): unknown;
-    dispose(...args: any[]): unknown;
+    show(): unknown;
+    dispose(): unknown;
 }
 
 export interface CacheManagerWindow {
@@ -34,18 +19,12 @@ export interface CacheManagerWindow {
     showErrorMessage(message: string): Awaitable<unknown>;
 }
 
-export interface CacheManagerFs {
-    existsSync(path: string): boolean;
-    unlinkSync(path: string): void;
-}
-
-export interface CacheManagerDependencies extends ExtensionRuntimeServices {
+export interface CacheManagerDependencies {
+    readonly runtimeContext: Pick<ExtensionRuntimeServices['runtimeContext'], 'getPrimaryWorkspaceRoot'>;
+    readonly executableService: Pick<ExtensionRuntimeServices['executableService'], 'findTalkBankCli' | 'runTalkBankCli'>;
     readonly window: CacheManagerWindow;
     readonly statusBarItem: CacheManagerStatusBarItem;
-    readonly fsOps?: CacheManagerFs;
-    readonly findProjectRootFn?: (
-        options: { startPath: string }
-    ) => Promise<ProjectSearchResult>;
+    readonly findProjectRootFn?: (options: { startPath: string }) => Promise<ProjectSearchResult>;
 }
 
 /**
@@ -54,36 +33,29 @@ export interface CacheManagerDependencies extends ExtensionRuntimeServices {
 export class CacheManager {
     private readonly window: CacheManagerWindow;
     private readonly statusBarItem: CacheManagerStatusBarItem;
-    private readonly fsOps: CacheManagerFs;
     private readonly findProjectRootFn: (
         options: { startPath: string }
     ) => Promise<ProjectSearchResult>;
-    private cacheStatsRefreshInterval: NodeJS.Timeout | null = null;
+    private phase: { readonly kind: 'active'; readonly interval: NodeJS.Timeout } | { readonly kind: 'disposed' };
     private projectRoot: string | undefined;
 
-    constructor(
+    private constructor(
         private readonly dependencies: CacheManagerDependencies,
     ) {
         this.window = dependencies.window;
         this.statusBarItem = dependencies.statusBarItem;
-        this.fsOps = dependencies.fsOps ?? fs;
         this.findProjectRootFn = dependencies.findProjectRootFn ?? findProjectRoot;
-    }
-
-    /**
-     * Start status-bar updates and project-root discovery.
-     */
-    initialize(): void {
-        if (this.cacheStatsRefreshInterval !== null) {
-            return;
-        }
-
         this.statusBarItem.command = 'talkbank.viewCacheStatistics';
         this.statusBarItem.tooltip = 'Click to view cache statistics';
         this.statusBarItem.show();
-
+        this.phase = { kind: 'active', interval: setInterval(() => { void this.updateCacheStats(); }, 5000) };
         void this.findProjectRootDir();
-        this.startRefreshingStats();
+        void this.updateCacheStats();
+    }
+
+    /** Admit a running cache UI with one owned refresh schedule. */
+    static start(dependencies: CacheManagerDependencies): CacheManager {
+        return new CacheManager(dependencies);
     }
 
     /**
@@ -99,19 +71,9 @@ export class CacheManager {
             startPath: workspaceRoot
         });
 
-        if (result.found && result.path) {
+        if (result.found) {
             this.projectRoot = result.path;
         }
-    }
-
-    /**
-     * Start auto-refreshing cache stats
-     */
-    private startRefreshingStats(): void {
-        void this.updateCacheStats();
-        this.cacheStatsRefreshInterval = setInterval(() => {
-            void this.updateCacheStats();
-        }, 5000);
     }
 
     /**
@@ -120,10 +82,23 @@ export class CacheManager {
     private async updateCacheStats(): Promise<void> {
         try {
             const stats = await this.getCacheStats();
+            if (this.phase.kind === 'disposed') {
+                return;
+            }
             if (stats) {
-                this.statusBarItem.text = `$(database) Cache: ${stats.totalEntries} files`;
+                switch (stats.database) {
+                    case 'current':
+                        this.statusBarItem.text = `$(database) Cache: ${stats.total_entries} files`;
+                        break;
+                    case 'absent':
+                        this.statusBarItem.text = '$(database) Cache: No database';
+                        break;
+                    case 'older_schema':
+                        this.statusBarItem.text = '$(database) Cache: Older schema';
+                        break;
+                }
             } else {
-                this.statusBarItem.text = '$(database) Cache: Initializing...';
+                this.statusBarItem.text = '$(database) Cache: Unavailable';
             }
         } catch (error) {
             console.error('Error updating cache stats:', error);
@@ -134,7 +109,7 @@ export class CacheManager {
     /**
      * Get cache statistics from the unified cache database
      */
-    private async getCacheStats(): Promise<CacheStats | null> {
+    private async getCacheStats(): Promise<CacheStatistics | null> {
         try {
             const cliPath = await this.findTalkBankCliPath();
             if (!cliPath) {
@@ -151,17 +126,7 @@ export class CacheManager {
                 return null;
             }
 
-            const stats = response.statistics;
-
-            return {
-                cacheSize: CacheStatisticsManager.formatBytes(stats.cacheSizeBytes),
-                totalEntries: stats.totalEntries,
-                validEntries: 0,
-                invalidEntries: 0,
-                expiredEntries: 0,
-                cacheHitRate: 0,
-                lastUpdated: stats.lastModified
-            };
+            return response;
         } catch (error) {
             console.error('Error getting cache stats:', error);
             return null;
@@ -176,24 +141,22 @@ export class CacheManager {
 
         if (!stats) {
             await this.window.showInformationMessage(
-                'Cache not initialized yet. Validate some files first.',
+                'Cache statistics unavailable. Check that the current chatter CLI is installed and the cache is readable.',
             );
             return;
         }
 
-        const message = `
-Cache Statistics
-================
-
-Cache Size: ${stats.cacheSize}
-Total Entries: ${stats.totalEntries}
-Valid Entries: ${stats.validEntries}
-Invalid Entries: ${stats.invalidEntries}
-Expired Entries: ${stats.expiredEntries}
-Cache Hit Rate: ${stats.cacheHitRate.toFixed(1)}%
-
-Last Updated: ${new Date(stats.lastUpdated).toLocaleString()}
-`.trim();
+        const message = stats.database === 'absent'
+            ? `No cache database at ${stats.cache_dir}.`
+            : stats.database === 'older_schema'
+                ? `Older cache schema at ${stats.cache_dir}. Chatter will migrate it during a writing operation.`
+                : [
+                    'Cache Statistics',
+                    `Total Entries: ${stats.total_entries}`,
+                    `Cache Directory: ${stats.cache_dir ?? 'In memory'}`,
+                    `Cache Size: ${stats.cache_size_bytes === null ? 'No database file' : CacheStatisticsManager.formatBytes(stats.cache_size_bytes)}`,
+                    `Last Updated: ${stats.last_modified ?? 'No database file'}`,
+                ].join('\n');
 
         await this.window.showInformationMessage(message);
     }
@@ -213,14 +176,13 @@ Last Updated: ${new Date(stats.lastUpdated).toLocaleString()}
         }
 
         try {
-            const cachePath = this.dependencies.runtimeContext.getCachePath();
-            if (this.fsOps.existsSync(cachePath)) {
-                this.fsOps.unlinkSync(cachePath);
-                await this.window.showInformationMessage('Validation cache cleared.');
-                void this.updateCacheStats();
-            } else {
-                await this.window.showInformationMessage('Cache file not found.');
+            const cliPath = await this.findTalkBankCliPath();
+            if (!cliPath) {
+                throw new Error('Install the current chatter CLI to clear its cache.');
             }
+            const result = this.dependencies.executableService.runTalkBankCli(cliPath, ['cache', 'clear', '--all', '--apply']);
+            await this.window.showInformationMessage(result);
+            void this.updateCacheStats();
         } catch (error) {
             await this.window.showErrorMessage(`Failed to clear cache: ${error}`);
         }
@@ -231,10 +193,13 @@ Last Updated: ${new Date(stats.lastUpdated).toLocaleString()}
      */
     async clearCacheForPath(itemPath: string): Promise<void> {
         try {
-            await this.window.showInformationMessage(
-                `Cache clearing for ${path.basename(itemPath)} would require database query. ` +
-                'For now, use "Clear All Cache" from the command palette.'
-            );
+            const cliPath = await this.findTalkBankCliPath();
+            if (!cliPath) {
+                throw new Error('Install the current chatter CLI to clear its cache.');
+            }
+            const result = this.dependencies.executableService.runTalkBankCli(cliPath, ['cache', 'clear', '--prefix', itemPath, '--apply']);
+            await this.window.showInformationMessage(result);
+            void this.updateCacheStats();
         } catch (error) {
             await this.window.showErrorMessage(`Failed to clear cache: ${error}`);
         }
@@ -253,10 +218,11 @@ Last Updated: ${new Date(stats.lastUpdated).toLocaleString()}
      * Dispose resources
      */
     dispose(): void {
-        if (this.cacheStatsRefreshInterval) {
-            clearInterval(this.cacheStatsRefreshInterval);
-            this.cacheStatsRefreshInterval = null;
+        const owned = this.phase;
+        this.phase = { kind: 'disposed' };
+        if (owned.kind === 'active') {
+            clearInterval(owned.interval);
+            this.statusBarItem.dispose();
         }
-        this.statusBarItem.dispose();
     }
 }

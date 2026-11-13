@@ -55,7 +55,7 @@ function loadMediaSegmentsFromSidecar(
         }
 
         const sidecar = yield* commands.getAlignmentSidecar(uri.toString()).pipe(
-            Effect.catchAll(error => Effect.sync(() => {
+            Effect.catch(error => Effect.sync(() => {
                 console.warn('Failed to load alignment sidecar:', error);
                 return null;
             })),

@@ -30,8 +30,8 @@ the end.
 
 ## Shared shape: PanelErrorMessage
 
-Every panel that can surface an extension-side failure uses the same
-error-envelope type:
+The participant editor uses this error-envelope type. Assessment failures
+add an operation discriminator so the browser can recover the correct controls.
 
 ```ts
 interface PanelErrorMessage {
@@ -40,8 +40,8 @@ interface PanelErrorMessage {
 }
 ```
 
-`createIdEditorErrorMessage(msg)` and `createKidevalErrorMessage(msg)`
-are thin constructors in `webviewMessageContracts.ts`.
+`createIdEditorErrorMessage(msg)` constructs this envelope in
+`webviewMessageContracts.ts`.
 
 ## Analysis panel
 
@@ -166,14 +166,14 @@ type KidevalPanelExtensionMessage =
     | { command: 'fileInfo'; fileName: string }
     | { command: 'databases'; databases: AvailableDatabase[]; filter: AnalysisDatabaseFilter }
     | { command: 'results'; data: unknown }
-    | PanelErrorMessage;
+    | { command: 'error'; operation: 'discovery' | 'analysis' | 'export'; message: string };
 ```
 
 - **Decoder:** `decodeKidevalPanelWebviewMessage`.
-- **Constructors:** `createKidevalFileInfoMessage`, `createKidevalDatabasesMessage`, `createKidevalResultsMessage`, `createKidevalErrorMessage`.
+- **Constructors:** `createKidevalFileInfoMessage`, `createKidevalDatabasesMessage`, `createKidevalResultsMessage`, `createAssessmentFailureMessage`.
 - **Renderer:** `src/webview/kidevalPanel.{html,js}`.
 - **Panel controller:** `src/kidevalPanel.ts`.
-- **Upstream RPC:** `discoverDatabases` message triggers `talkbank/kidevalDatabases`; `runAnalysis` triggers `talkbank/analyze` with `kideval` command name.
+- **Availability:** analysis and database discovery use the composed server. Results pass revision admission before presentation.
 
 ## Graph panel (no contract)
 
@@ -186,7 +186,7 @@ state the extension needs.
 - **Panel controller:** `src/graphPanel.ts`.
 - **Renderer:** `src/webview/graphPanel.{html,js}`.
 - **Upstream:** `talkbank/showDependencyGraph` (see
-  [RPC Contracts](rpc-contracts.md#talkbankshowdependencygraph)).
+  [RPC Contracts](rpc-contracts.md#current-endpoint-surface)).
 
 ## Picture panel (no contract)
 
@@ -203,7 +203,7 @@ Every decoder uses the shared `decodePanelMessageWithSchema` helper in
 `effectBoundary.ts`, which runs the Effect `Schema` against the
 payload and throws `StructuredPayloadDecodeError` with a
 panel-labeled reason on mismatch. Panel controllers translate the
-error into a `PanelErrorMessage` sent back to the webview.
+error into a panel-specific message sent back to the webview. Assessment failures retain their originating discovery, analysis or export operation.
 
 ## Adding a new panel
 

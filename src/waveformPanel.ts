@@ -16,6 +16,7 @@
  *   `highlightSegment` message here to draw a bright playhead indicator.
  */
 
+import { injectPanelScript } from './webviewScript';
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { decodePanelMessage, disposePanelResources, reuseOrCreatePanel } from './panelLifecycle';
@@ -189,15 +190,8 @@ export class WaveformPanel {
             vscode.Uri.file(this._assetPaths.scriptPath),
         );
 
-        // Build the data injection script block.
-        const dataScript = `<script>
-    const SEGMENTS  = ${JSON.stringify(segments)};
-    const MEDIA_URI = ${JSON.stringify(mediaUri)};
-</script>`;
-
-        // Replace placeholders.
-        html = html.replace('<!--INJECT_DATA-->', dataScript);
-        html = html.replace('<!--INJECT_SCRIPT-->', `<script src="${jsUri}"></script>`);
+        html = injectPanelScript(html, { kind: 'waveform', segments, mediaUri });
+        html = html.replace('<!--INJECT_SCRIPT-->', () => `<script src="${jsUri}"></script>`);
 
         return html;
     }

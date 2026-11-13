@@ -1,16 +1,27 @@
 # Assessment Tools
 
+
 **Status:** Current
-**Last updated:** 2026-05-21 13:45 EDT
+**Last updated:** 2026-11-13
 
-The assessment tools, KidEval, Eval, and Eval-D, compare a
-speaker's language measures against normative databases. Instead of
-reporting raw numbers (MLU = 3.2), they tell you how that number
-compares to age-matched peers (z-score = -1.5, below average).
+KidEval, EVAL and EVAL-D have dedicated commands and panels. They run the
+Rust library's implemented measures and can request comparisons with locally
+installed normative databases.
 
-These tools have dedicated commands and panels, separate from the
-general CLAN analysis picker. They are the primary workflow for
-clinical assessment and research benchmarking.
+## Current limits
+
+The editor currently uses default scoring configurations. Custom DSS/IPSyn
+rules and CLAN language-bundle selection need additional controls. KidEval's
+combined VOCD measure uses a simplified estimate. Real reference-database
+comparison and numerical agreement with macOS CLAN remain qualification work.
+The completed native UI journey covers EVAL without a database and CSV export.
+The [parity inventory](../developer/clan-parity.md) tracks these gaps and the
+paused full-parity goal.
+
+Set `talkbank.clan.libraryDirectory` to your CLAN `lib` directory. The panel
+uses its `kideval` or `eval` subdirectory. Without that setting, choose **Run
+without Database**. A selected database that cannot be loaded causes an error.
+Database availability depends on the files actually installed on your machine.
 
 ## KidEval, Child Language Assessment
 
@@ -35,9 +46,8 @@ The panel presents two cascading dropdowns:
   or Toyplay). The activity dropdown filters automatically to show
   only the activities available for the selected language.
 
-If the CHAT file has `@Languages` and `@Types` headers, the panel
-**auto-detects** the correct language and activity, no manual
-selection needed.
+Select language and activity from the installed database metadata. Automatic
+selection from CHAT headers remains unfinished in the current editor integration.
 
 Below the dropdowns, an **availability grid** shows all language ×
 activity combinations at a glance. Click any cell to select it:
@@ -56,8 +66,7 @@ Chinese        ●            ●
 ```
 
 When a language + activity is selected, a **matching database card**
-appears showing the database filename, sample count (read live from
-the `.cut` file), and metadata.
+shows the selected database filename and available metadata.
 
 The activity type matters: narrative tasks (story retelling, picture
 description) and toy play sessions elicit different language patterns.
@@ -73,9 +82,6 @@ comparison group:
   against children within a specific developmental window
 
 Leave these fields blank to compare against the full normative sample.
-
-> **(SCREENSHOT: KidEval panel showing language/activity dropdowns, availability grid with a cell selected, and the matching database card)**
-> *Capture this: open the KidEval panel on an English narrative .cha file. The language should be auto-selected to "English (NA)", activity to "Narrative", and the grid should highlight the eng/narrative cell. Show the matching database card below.*
 
 ### Available KidEval databases
 
@@ -204,8 +210,8 @@ All three assessment tools support CSV export:
 
 1. After results are displayed, click **Export CSV** in the panel toolbar.
 2. Choose a save location.
-3. The CSV includes all stat card values, z-scores, and the full
-   comparison table.
+3. The CSV contains the rendered table cells, including comparison columns
+   when present. Stat-card-only values still need export support.
 
 This is useful for:
 - Importing results into a clinical report template
@@ -229,4 +235,13 @@ This is useful for:
   IPSyn measure in detail
 - [Running CLAN Commands](running-commands.md) -- how to run analysis
   commands in general
-- [Command Reference](command-reference.md) -- all 33 commands
+- [Command Reference](command-reference.md) -- the analysis commands
+
+## Recovering from a failed operation
+
+An analysis error restores both run controls so you can correct the selected
+input and retry. Database discovery failure replaces the loading indicators.
+Correct `talkbank.clan.libraryDirectory` and reopen the assessment panel to
+retry discovery. Running without a database remains available.
+Age bounds are whole months, including zero and adult ages. The boundary
+admits values through the server's unsigned 32-bit month representation.

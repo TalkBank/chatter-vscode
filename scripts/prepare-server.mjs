@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Copies a prebuilt talkbank-lsp binary into vscode/server/ before packaging.
+// Copies a prebuilt composed editor-server binary into vscode/server/ before packaging.
 // Usage: node scripts/prepare-server.mjs --source <path> [--windows]
 import { copyFileSync, chmodSync, mkdirSync, existsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -14,7 +14,7 @@ const { values } = parseArgs({
 });
 
 if (!values.source) {
-    console.error('error: --source <path-to-talkbank-lsp> is required');
+    console.error('error: --source <path-to-chatter-clan-lsp> is required');
     process.exit(1);
 }
 

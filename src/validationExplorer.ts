@@ -84,12 +84,12 @@ class ValidationTreeItem extends vscode.TreeItem {
                         );
                         this.description = '✓ valid (cached)';
                         break;
-                    case ValidationStatus.ParseError:
+                    case ValidationStatus.InternalError:
                         this.iconPath = new vscode.ThemeIcon(
                             'error',
                             new vscode.ThemeColor('testing.iconFailed')
                         );
-                        this.description = '✗ parse error';
+                        this.description = '✗ internal failure';
                         break;
                     case ValidationStatus.ReadError:
                         this.iconPath = new vscode.ThemeIcon(
@@ -97,6 +97,10 @@ class ValidationTreeItem extends vscode.TreeItem {
                             new vscode.ThemeColor('testing.iconFailed')
                         );
                         this.description = '✗ read error';
+                        break;
+                    case ValidationStatus.Unchecked:
+                        this.iconPath = new vscode.ThemeIcon('circle-outline');
+                        this.description = 'not checked';
                         break;
                     case ValidationStatus.Validating:
                         this.iconPath = new vscode.ThemeIcon('loading~spin');
@@ -222,6 +226,7 @@ export class ValidationExplorerProvider
      * Validate a single file.
      */
     async validateFile(filePath: string): Promise<void> {
+        this.validationResults.delete(filePath);
         this.validatingFiles.add(filePath);
         this.refresh();
 
@@ -262,6 +267,7 @@ export class ValidationExplorerProvider
                     }
 
                     const file = files[i];
+                    this.validationResults.delete(file);
                     this.validatingFiles.add(file);
                     this.refresh();
 
@@ -357,7 +363,7 @@ export class ValidationExplorerProvider
         return (
             this.validationResults.get(filePath) || {
                 path: filePath,
-                status: ValidationStatus.Valid
+                status: ValidationStatus.Unchecked
             }
         );
     }

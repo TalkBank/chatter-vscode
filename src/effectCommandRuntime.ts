@@ -2,25 +2,18 @@
  * Effect-native command and panel runtime for the VS Code extension.
  */
 
-/* eslint-disable @typescript-eslint/naming-convention */
-
 import * as vscode from 'vscode';
-import { Context, Data, Effect, Layer } from 'effect';
+import { Context, Data, Effect, Layer, ManagedRuntime, Result } from 'effect';
 
+import { NoActiveEditorError, NoActiveChatEditorError, admitActiveEditor, admitChatEditor, type AdmittedChatEditor } from './editorAdmission';
 import type { ExtensionServices } from './activation/commands';
 import { StructuredPayloadDecodeError } from './effectBoundary';
+import { ClanAnalysisUnavailable } from './lsp/executeCommandErrors';
+import { ClanRequestError } from './lsp/clanClient';
 import {
     AsyncOperationError,
-    CacheManagerService,
-    ClanIntegrationService,
-    ExecutableServiceService,
-    ExecuteCommandClientService,
-    ExtensionContextService,
     ExtensionEffectRequirements,
-    ExtensionRuntimeContextService,
-    LanguageClientService,
-    runEitherWithLayer,
-    runWithLayer,
+    makeExtensionServicesLayer,
     tryAsync,
 } from './effectRuntime';
 import {
@@ -31,19 +24,15 @@ import {
 import {
     createTranscriptionCommandStateStore,
     createWalkerCommandStateStore,
-    TranscriptionCommandStateStore,
     TranscriptionCommandStateService,
-    WalkerCommandStateStore,
     WalkerCommandStateService,
 } from './mediaCommandState';
 import {
     CoderCommandStateService,
-    CoderCommandStateStore,
     createCoderCommandStateStore,
 } from './coderState';
 import {
     ReviewCommandStateService,
-    ReviewCommandStateStore,
     createReviewCommandStateStore,
 } from './reviewState';
 import {
@@ -55,47 +44,31 @@ import {
 /**
  * Effect service exposing `vscode.window`.
  */
-export const VSCodeWindowService = Context.GenericTag<typeof vscode.window>(
-    'talkbank/VSCodeWindow',
-);
+export class VSCodeWindowService extends Context.Service<VSCodeWindowService, typeof vscode.window>()('talkbank/VSCodeWindow') {}
 
 /**
  * Effect service exposing `vscode.workspace`.
  */
-export const VSCodeWorkspaceService = Context.GenericTag<typeof vscode.workspace>(
-    'talkbank/VSCodeWorkspace',
-);
+export class VSCodeWorkspaceService extends Context.Service<VSCodeWorkspaceService, typeof vscode.workspace>()('talkbank/VSCodeWorkspace') {}
 
 /**
  * Effect service exposing `vscode.commands`.
  */
-export const VSCodeCommandsService = Context.GenericTag<typeof vscode.commands>(
-    'talkbank/VSCodeCommands',
-);
+export class VSCodeCommandsService extends Context.Service<VSCodeCommandsService, typeof vscode.commands>()('talkbank/VSCodeCommands') {}
 
 /**
  * Effect environment used by extension commands and async panel callbacks.
  */
 export type ExtensionCommandRequirements =
     | ExtensionEffectRequirements
-    | typeof vscode.window
-    | typeof vscode.workspace
-    | typeof vscode.commands
-    | TranscriptionCommandStateStore
-    | WalkerCommandStateStore
-    | CoderCommandStateStore
-    | ReviewCommandStateStore
+    | VSCodeWindowService
+    | VSCodeWorkspaceService
+    | VSCodeCommandsService
+    | TranscriptionCommandStateService
+    | WalkerCommandStateService
+    | CoderCommandStateService
+    | ReviewCommandStateService
     | TextFileService;
-
-/**
- * Tagged error for commands that require an active editor.
- */
-export class NoActiveEditorError extends Data.TaggedError('NoActiveEditorError')<{}> {}
-
-/**
- * Tagged error for commands that require an active CHAT editor.
- */
-export class NoActiveChatEditorError extends Data.TaggedError('NoActiveChatEditorError')<{}> {}
 
 /**
  * Tagged error for commands that require a running language server.
@@ -147,12 +120,9 @@ export class EmptyCommandResponseError extends Data.TaggedError('EmptyCommandRes
  * Shared runner that executes Effect programs with the extension command layer.
  */
 export interface ExtensionCommandRunner {
+    dispose(): Promise<void>;
     run<A, E>(program: Effect.Effect<A, E, ExtensionCommandRequirements>): Promise<A>;
-    runEither<A, E>(program: Effect.Effect<A, E, ExtensionCommandRequirements>): Promise<{
-        readonly _tag: 'Left' | 'Right';
-        readonly left?: E;
-        readonly right?: A;
-    }>;
+    runResult<A, E>(program: Effect.Effect<A, E, ExtensionCommandRequirements>): Promise<Result.Result<A, E>>;
     fireAndForget<E>(
         label: string,
         program: Effect.Effect<unknown, E, ExtensionCommandRequirements>,
@@ -177,13 +147,7 @@ export function makeExtensionCommandLayer(
         Layer.succeed(VSCodeWindowService, vscode.window),
         Layer.succeed(VSCodeWorkspaceService, vscode.workspace),
         Layer.succeed(VSCodeCommandsService, vscode.commands),
-        Layer.succeed(ExtensionContextService, context),
-        Layer.succeed(LanguageClientService, services.client),
-        Layer.succeed(ExecuteCommandClientService, services.commands),
-        Layer.succeed(ExecutableServiceService, services.executableService),
-        Layer.succeed(CacheManagerService, services.cacheManager),
-        Layer.succeed(ClanIntegrationService, services.clanIntegration),
-        Layer.succeed(ExtensionRuntimeContextService, services.runtimeContext),
+        makeExtensionServicesLayer(context, services),
         Layer.succeed(TranscriptionCommandStateService, transcriptionState),
         Layer.succeed(WalkerCommandStateService, walkerState),
         Layer.succeed(CoderCommandStateService, coderState),
@@ -199,22 +163,20 @@ export function createExtensionCommandRunner(
     context: vscode.ExtensionContext,
     services: ExtensionServices,
 ): ExtensionCommandRunner {
-    const layer = makeExtensionCommandLayer(context, services);
+    const runtime = ManagedRuntime.make(makeExtensionCommandLayer(context, services));
 
     return {
-        run: program => runWithLayer(program, layer),
-        runEither: async program => {
-            const result = await runEitherWithLayer(program, layer);
-            return result._tag === 'Left'
-                ? { _tag: 'Left', left: result.left }
-                : { _tag: 'Right', right: result.right };
-        },
+        dispose: () => runtime.dispose(),
+        run: program => runtime.runPromise(program),
+        runResult: program => runtime.runPromise(Effect.result(program)),
         fireAndForget: (label, program, onError) => {
-            void runEitherWithLayer(program, layer).then(result => {
-                if (result._tag === 'Left') {
-                    console.error(`Effect failure in ${label}`, result.left);
-                    onError?.(result.left);
+            void runtime.runPromise(Effect.result(program)).then(result => {
+                if (result._tag === 'Failure') {
+                    console.error(`Effect failure in ${label}`, result.failure);
+                    onError?.(result.failure);
                 }
+            }).catch(cause => {
+                console.error(`Effect runtime stopped in ${label}`, cause);
             });
         },
     };
@@ -231,7 +193,7 @@ export function registerEffectCommand<args extends unknown[] = []>(
     return vscode.commands.registerCommand(name, (...args: unknown[]) => {
         runner.fireAndForget(
             name,
-            Effect.catchAll(
+            Effect.catch(
                 Effect.suspend(() => handler(...args as args)),
                 error => showEffectError(error),
             ),
@@ -263,33 +225,18 @@ export function runPanelEffect<E>(
     );
 }
 
-/**
- * Require that there is an active editor.
- */
-export function requireActiveEditor(): Effect.Effect<
-    vscode.TextEditor,
-    NoActiveEditorError,
-    typeof vscode.window
-> {
-    return Effect.flatMap(VSCodeWindowService, window => {
-        const editor = window.activeTextEditor;
-        return editor === undefined
-            ? Effect.fail(new NoActiveEditorError())
-            : Effect.succeed(editor);
-    });
+/** Read VS Code's current editor once and admit the observation. */
+export function requireActiveEditor(): Effect.Effect<vscode.TextEditor, NoActiveEditorError, VSCodeWindowService> {
+    return Effect.flatMap(VSCodeWindowService, window => admitActiveEditor(window.activeTextEditor));
 }
 
-/**
- * Require that the active editor is a CHAT document.
- */
+/** Capture a current CHAT editor for a CHAT-only operation. */
 export function requireActiveChatEditor(): Effect.Effect<
-    vscode.TextEditor,
+    AdmittedChatEditor<vscode.TextEditor>,
     NoActiveEditorError | NoActiveChatEditorError,
-    typeof vscode.window
+    VSCodeWindowService
 > {
-    return Effect.flatMap(requireActiveEditor(), editor => editor.document.languageId === 'chat'
-        ? Effect.succeed(editor)
-        : Effect.fail(new NoActiveChatEditorError()));
+    return Effect.flatMap(requireActiveEditor(), admitChatEditor);
 }
 
 /**
@@ -337,6 +284,12 @@ export function formatEffectError(error: unknown): string {
     if (error instanceof EmptyCommandResponseError) {
         return `No result returned for ${error.command}`;
     }
+    if (error instanceof ClanRequestError) {
+        return error.details;
+    }
+    if (error instanceof ClanAnalysisUnavailable) {
+        return error.details;
+    }
     if (error instanceof ExecuteCommandRequestError) {
         return `Failed to execute ${error.command}: ${error.details}`;
     }
@@ -360,7 +313,8 @@ export function formatEffectError(error: unknown): string {
 
 function effectErrorSeverity(error: unknown): 'error' | 'warning' | 'info' {
     if (
-        error instanceof NoActiveEditorError
+        error instanceof ClanAnalysisUnavailable
+        || error instanceof NoActiveEditorError
         || error instanceof NoActiveChatEditorError
         || error instanceof MissingMediaHeaderError
         || error instanceof MediaFileNotFoundError
@@ -379,7 +333,7 @@ function effectErrorSeverity(error: unknown): 'error' | 'warning' | 'info' {
  */
 export function showEffectError(
     error: unknown,
-): Effect.Effect<void, AsyncOperationError, typeof vscode.window> {
+): Effect.Effect<void, AsyncOperationError, VSCodeWindowService> {
     const message = formatEffectError(error);
     return Effect.flatMap(VSCodeWindowService, window => {
         switch (effectErrorSeverity(error)) {

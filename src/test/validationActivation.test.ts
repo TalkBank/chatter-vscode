@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('vscode', () => {
-    class EventEmitter<T> {
+    class EventEmitter<_T> {
         readonly event = vi.fn();
         readonly fire = vi.fn();
         readonly dispose = vi.fn();
@@ -78,7 +78,6 @@ function createRuntimeContext(root = '/workspace'): ExtensionRuntimeContext {
         getMediaDefaultSpeed: () => 100,
         getTranscriptionDefaultSpeaker: () => 'CHI',
         getTranscriptionRewindSeconds: () => 2,
-        getCachePath: () => '/cache/talkbank-cache.db',
     };
 }
 

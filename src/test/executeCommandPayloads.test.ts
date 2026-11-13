@@ -2,13 +2,10 @@
  * Tests for the typed execute-command payload boundary and its shared fixtures.
  */
 
-/* eslint-disable @typescript-eslint/naming-convention */
 import { describe, expect, it } from 'vitest';
 
 import { StructuredPayloadDecodeError } from '../effectBoundary';
-import analyzeCommandPayloadFixture from './fixtures/analyzeCommandPayload.json';
 import {
-    buildAnalyzeCommandRequest,
     decodeAvailableDatabaseList,
     decodeFormattedBulletLine,
     decodeParticipantEntryList,
@@ -19,6 +16,13 @@ import {
 } from '../lsp/executeCommandPayloads';
 
 describe('execute-command payload decoders', () => {
+    /**
+     * Guards: speaker and participant JSON fields decode to their semantic records.
+     * Kind: wire
+     * Not a type: external arrays and participant field names enter as unknown JSON.
+     * State: exact in-memory payload values, with no browser, disk or process state.
+     * Concurrency: none, synchronous admission is local to each payload.
+     */
     it('decodes structured speaker and participant payloads', () => {
         expect(decodeSpeakerInfoList([
             { code: 'CHI', name: 'Child', role: 'Target_Child' },
@@ -63,6 +67,13 @@ describe('execute-command payload decoders', () => {
         ]);
     });
 
+    /**
+     * Guards: chat operation and database JSON fields retain their wire mapping.
+     * Kind: wire
+     * Not a type: server payloads include control characters, null corpus types and numeric positions.
+     * State: exact in-memory payload values, with no browser, disk or process state.
+     * Concurrency: none, synchronous admission is local to each payload.
+     */
     it('decodes structured chat-op payloads', () => {
         expect(decodeFormattedBulletLine({
             bullet: ' \u0015 100_200 \u0015',
@@ -129,24 +140,13 @@ describe('execute-command payload decoders', () => {
         ]);
     });
 
-    it('builds the canonical analyze request fixture', () => {
-        expect(buildAnalyzeCommandRequest('eval-d', 'file:///tmp/test.cha', {
-            maxUtterances: 100,
-            databasePath: '/Users/Shared/CLAN/lib/kideval/eng_toyplay_db.cut',
-            databaseFilter: {
-                language: 'eng',
-                group: 'TD',
-                gender: 'Female',
-                age_from_months: 24,
-                age_to_months: 48,
-                speaker_codes: ['CHI', 'INV'],
-            },
-            dssMaxUtterances: 75,
-            ipsynMaxUtterances: 80,
-            sortByFrequency: true,
-        })).toEqual(analyzeCommandPayloadFixture);
-    });
-
+    /**
+     * Guards: server string errors fail structured payload admission with their text.
+     * Kind: wire
+     * Not a type: a server error is an external string instead of the requested record array.
+     * State: exact in-memory payload values, with no browser, disk or process state.
+     * Concurrency: none, synchronous admission is local to each payload.
+     */
     it('throws when a structured payload arrives as a string error', () => {
         expect(() => decodeSpeakerInfoList('Speaker error: Document not found')).toThrow(
             'Speaker error: Document not found',
@@ -156,6 +156,13 @@ describe('execute-command payload decoders', () => {
         );
     });
 
+    /**
+     * Guards: a numeric corpus type is rejected before database presentation.
+     * Kind: wire
+     * Not a type: external discovery JSON can violate the nullable string field.
+     * State: exact in-memory payload values, with no browser, disk or process state.
+     * Concurrency: none, synchronous admission is local to each payload.
+     */
     it('wraps malformed structured objects in a tagged decode error', () => {
         expect(() => decodeAvailableDatabaseList([
             {
@@ -167,6 +174,13 @@ describe('execute-command payload decoders', () => {
         ])).toThrow(StructuredPayloadDecodeError);
     });
 
+    /**
+     * Guards: sidecar admission retains valid utterances and excludes malformed ranges.
+     * Kind: wire
+     * Not a type: partial playback recovery is a semantic choice over exact malformed range bytes.
+     * State: exact in-memory payload values, with no browser, disk or process state.
+     * Concurrency: none, synchronous admission is local to each payload.
+     */
     it('parses the playback-facing sidecar envelope and drops malformed utterances', () => {
         expect(parseAlignmentSidecarDocument('Parse error')).toBeNull();
         expect(parseAlignmentSidecarDocument({ utterances: [] })).toBeNull();

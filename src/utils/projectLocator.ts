@@ -5,21 +5,14 @@
  */
 
 import * as fs from 'fs';
+import * as path from 'path';
 
 /**
  * Result of project root search.
  */
-export interface ProjectSearchResult {
-    /**
-     * Whether Cargo.toml was found.
-     */
-    found: boolean;
-
-    /**
-     * Path to directory containing Cargo.toml, or null if not found.
-     */
-    path: string | null;
-}
+export type ProjectSearchResult =
+    | { readonly found: true; readonly path: string }
+    | { readonly found: false; readonly path: null };
 
 /**
  * Options for project root search.
@@ -46,31 +39,13 @@ export interface ProjectLocatorOptions {
 }
 
 /**
- * Returns the parent directory of a path using pure string manipulation.
- *
- * Deliberately avoids path.dirname / path.resolve so that paths containing
- * ".." or "." segments are preserved exactly as-is (matching mock filesystem
- * keys built the same way).  Stops at the filesystem root by returning "/"
- * whenever the last "/" is at index 0.
- */
-function stringParentDir(p: string): string {
-    const lastSlash = p.lastIndexOf('/');
-    // lastSlash === 0 means the only "/" is the leading one (we are at root).
-    if (lastSlash <= 0) {
-        return '/';
-    }
-    return p.substring(0, lastSlash);
-}
-
-/**
  * Finds the project root by searching for Cargo.toml.
  *
  * Traverses up the directory tree from startPath, looking for Cargo.toml.
  * Stops at filesystem root or after maxDepth iterations.
  *
- * Path construction uses plain string concatenation rather than path.join so
- * that the keys checked against the filesystem mirror exactly how callers
- * build file paths (important for in-memory mock filesystems in tests).
+ * Native path operations normalize candidates and handle the host platform
+ * separators. Injected observations use the same native paths.
  *
  * @param options - Configuration for search behavior
  * @returns Search result with found status and path
@@ -99,10 +74,7 @@ export async function findProjectRoot(
         let current = startPath;
 
         for (let i = 0; i < maxDepth; i++) {
-            // Build the candidate path without normalization so it matches
-            // however the caller constructed the filesystem keys.
-            const sep = current.endsWith('/') ? '' : '/';
-            const cargoToml = current + sep + 'Cargo.toml';
+            const cargoToml = path.join(current, 'Cargo.toml');
 
             if (fsOps.existsSync(cargoToml)) {
                 return {
@@ -111,10 +83,7 @@ export async function findProjectRoot(
                 };
             }
 
-            // Move to parent directory using string manipulation only, no
-            // path.dirname / path.resolve, to avoid normalising ".." or "."
-            // segments away, which would break mock-filesystem key lookups.
-            const parent = stringParentDir(current);
+            const parent = path.dirname(current);
 
             // Stop if we've reached filesystem root (parent === current).
             if (parent === current) {

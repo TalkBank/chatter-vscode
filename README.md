@@ -1,13 +1,13 @@
 # TalkBank CHAT for VS Code
 
 **Status:** Current
-**Last updated:** 2026-06-24 08:10 EDT
+**Last updated:** 2026-11-13
 
 [![CI](https://github.com/TalkBank/chatter-vscode/actions/workflows/ci.yml/badge.svg)](https://github.com/TalkBank/chatter-vscode/actions/workflows/ci.yml)
 
-Full language support for CHAT transcription files (`.cha`), the format used by [TalkBank](https://talkbank.org), [CHILDES](https://childes.talkbank.org), and related corpora for linguistic research on conversational data.
+Editing and analysis support for CHAT transcription files (`.cha`), the format used by [TalkBank](https://talkbank.org), [CHILDES](https://childes.talkbank.org), and related corpora for linguistic research on conversational data.
 
-This extension replaces the macOS CLAN application with a modern, cross-platform editing environment inside VS Code.
+This extension is maintained as a VS Code editor and a concrete consumer of Chatter's language-server contract. CLAN analysis uses the composed `chatter-clan-lsp` Rust server.
 
 ## Screenshots
 
@@ -35,26 +35,15 @@ Full TextMate grammar plus semantic tokens from the language server. Headers, sp
 
 Press `Cmd+Shift+G` to render the `%gra` dependency structure of the current utterance as a color-coded graph. Arcs are labeled with grammatical relations (SUBJ, OBJ, DET, MOD, ROOT, etc.) and colored by type. Export as SVG or PNG.
 
-### CLAN Analysis Commands
+### CLAN Analysis
 
-Run analysis commands directly from the editor, right-click and choose **Run CLAN Analysis**, or use the Command Palette. Results display in a styled panel with stat cards, tables, and bar charts. Export results to CSV for use in spreadsheets or statistical software.
+CLAN analysis runs in `chatter-clan-lsp`, a composed Rust server linking
+Chatter's editor library and the `talkbank-clan` analysis library. Select its
+binary with `talkbank.lsp.binaryPath`, or use a VSIX that bundles it. The server
+advertises the available commands and required prompts. The core editor RPCs
+remain owned by Chatter. Library differences and historical audit snapshots are tracked in the
+[chatter-clan parity record](https://talkbank.github.io/chatter-clan/parity-status.html).
 
-| Category | Commands |
-|----------|----------|
-| **Frequency & length** | freq, freqpos, mlu, mlt, wdlen, maxwd |
-| **Search** | kwal, combo, cooccur, dist, uniq |
-| **Developmental measures** | dss, ipsyn, kideval, eval, sugar, vocd |
-| **Coding & reliability** | codes, chains, keymap, rely |
-| **Fluency & phonology** | flucalc, phonfreq |
-| **Interaction** | chip, modrep |
-| **Morphology & tiers** | mortable, trnfix |
-| **Structure** | gemlist, timedur, script |
-
-Commands that need extra input (keywords, file paths) prompt you before running. Run analysis on an entire directory via the Explorer context menu.
-
-### KidEval / Eval / Eval-D Normative Comparison
-
-Compare a child's language measures against normative databases. Select a database, optionally filter by age and gender, and view z-scores in an interactive panel. Available for child development (KidEval), general assessment (Eval), and dementia evaluation (Eval-D with DementiaBank databases).
 
 ### Participant Editor
 
@@ -98,7 +87,7 @@ Context-aware suggestions for speaker codes (from `@Participants`), dependent ti
 
 ### Quick Fixes
 
-Automatic fixes for common errors: replacing `xx` with `xxx`, adding missing terminators, appending trailing-off markers, adding undeclared speakers to `@Participants` (E308), and fixes for E501/E502/E503. Diagnostics use fade-out tags for deprecated or unnecessary code.
+Quick fixes come from the selected server's current diagnostics and repair catalog. They require versioned workspace-edit support. Review each proposed edit before applying it. Enter missing participant identities, roles and languages explicitly.
 
 ### On-Type Formatting
 
@@ -179,14 +168,21 @@ If the CLAN application is installed, open any `.cha` file directly in CLAN at t
 
 On Windows/Linux, substitute `Ctrl` for `Cmd`.
 
-## Beyond CLAN
+## Scope and CLAN parity
 
-The extension goes well beyond replicating the macOS CLAN application. Features with no CLAN equivalent include: corpus-scale validation across entire directory trees, real-time diagnostics as you type, quick-fix code actions, bidirectional cross-tier alignment highlighting, alignment mismatch inlay hints, go-to-definition, find all references, rename across all occurrences, linked editing, code lens utterance counts, smart selection by syntactic units, workspace symbol search across files, clickable document links, speaker filtering, code folding, CSV export, configurable severity filtering, and cross-platform support (macOS, Windows, Linux). See the [CLAN Feature Parity chapter](../book/src/vscode/developer/clan-parity.md) for the full comparison.
+Full feature parity with the macOS CLAN application is a paused long-term goal.
+This update maintains the editor and restores 34 library analysis commands.
+Most command options use library defaults. Custom scoring-rule controls,
+annotation tools, converter/transform workflows, complete application-workflow
+comparison and further native-platform qualification remain open. Real normative
+database comparisons and command-specific C CLAN output parity need additional
+evidence. The [parity and remaining-work inventory](book/src/developer/clan-parity.md)
+records the current coverage, concrete gaps and completed qualification.
 
 ## Requirements
 
-- VS Code 1.110 or later (matches `engines.vscode` in `package.json`)
-- The platform-specific VSIX from the chatter release. It bundles a prebuilt `talkbank-lsp` binary under `server/`; the extension does not install the `chatter` CLI.
+- VS Code 1.146 or later (matches `engines.vscode` in `package.json`)
+- A platform-specific VSIX built by this repository bundles the composed editor server under `server/`. Local development can select its absolute path through `talkbank.lsp.binaryPath`.
 
 The extension searches for `talkbank-lsp` on your system PATH first, then falls back to `target/debug/` and `target/release/` relative to the extension directory.
 
@@ -208,10 +204,10 @@ The extension searches for `talkbank-lsp` on your system PATH first, then falls 
 
 All documentation lives in the **[TalkBank CHAT Editor book](../book/src/introduction.md)** (mdBook). Entry points:
 
-- [Getting Started](../book/src/vscode/getting-started/installation.md): install a platform VSIX and open your first file
-- [Editing](../book/src/vscode/editing/syntax-highlighting.md) / [Navigation](../book/src/vscode/navigation/alignment.md) / [Media & Transcription](../book/src/vscode/media/playback.md), feature chapters
-- [Developer Guide](../book/src/vscode/developer/architecture.md): three-layer architecture, LSP internals, adding features
-- [CLAN Feature Parity](../book/src/vscode/developer/clan-parity.md): comparison with the macOS CLAN application
+- [Getting Started](book/src/getting-started/installation.md): install a platform VSIX and open your first file
+- [Editing](book/src/editing/syntax-highlighting.md) / [Navigation](book/src/navigation/alignment.md) / [Media & Transcription](book/src/media/playback.md), feature chapters
+- [Developer Guide](book/src/developer/architecture.md): three-layer architecture, LSP internals, adding features
+- [CLAN Parity and Remaining Work](book/src/developer/clan-parity.md): current coverage, paused goal and concrete gaps
 
 ## Links
 

@@ -1,76 +1,78 @@
 # Cache Management
 
 **Status:** Current
-**Last updated:** 2026-05-21 14:20 EDT
+**Last updated:** 2026-11-13
 
-The extension uses a SQLite cache to store validation results, avoiding redundant re-validation of files that have not changed. This chapter covers the cache location, monitoring, and maintenance.
+Chatter's CLI owns its validation cache. The extension polls
+`chatter cache stats --format json` every five seconds and uses Chatter's cache
+commands for maintenance. Install the current `chatter` CLI separately for
+these features. The bundled composed language server supplies editor and CLAN
+analysis RPCs.
 
-## Cache Location
+## Cache observations
 
-The cache database is stored in the OS-standard cache directory:
+Click the cache status-bar indicator or run **TalkBank: View Cache Statistics**.
+The current wire contract distinguishes three observations.
 
-| OS | Path |
-|----|------|
-| **macOS** | `~/Library/Caches/talkbank-chat/` |
-| **Linux** | `~/.cache/talkbank-chat/` |
-| **Windows** | `%LocalAppData%\talkbank-chat\` |
+- An absent database shows its cache directory.
+- An older schema shows its directory and migration status.
+- A current database shows its measured entry count, directory, file size and
+  modification time. In-memory storage and a missing database file retain
+  their explicit absence values.
 
-The cache directory contains a SQLite database file. It is safe to delete this directory entirely -- the extension will recreate it on the next validation run.
+An unavailable CLI, unreadable cache or refused response shows **Unavailable**.
+Valid, invalid and expired counts and a hit-rate breakdown have no fields in
+this wire contract.
 
-## Status Bar Indicator
+## Clearing entries
 
-A cache indicator appears in the bottom-right of the VS Code status bar, showing the number of cached files (e.g., `Cache: 95,247 files`). This updates every 5 seconds by polling the `chatter cache stats --json` CLI command.
+In the Validation Explorer, right-click a file or directory and select
+**Clear Cache**. The extension requests a preview, shows the returned count,
+then asks for confirmation before applying the operation.
 
-Click the status bar indicator to view detailed cache statistics in a popup.
+Run **TalkBank: Clear All Validation Cache** to confirm removal of every entry.
+Both operations use the CLI's database owner. The resulting native message
+reports what was cleared.
 
-## View Cache Statistics
-
-Open the Command Palette (`Cmd+Shift+P` / `Ctrl+Shift+P`) and select **TalkBank: View Cache Statistics**.
-
-This displays a popup with:
-
-- **Cache database size** -- the on-disk size of the SQLite file
-- **Total cached entries** -- how many files have cached results
-- **Last updated timestamp** -- when the cache was last written to
-
-The popup template also renders Valid / Invalid / Expired entry
-counts and a Cache Hit Rate row. The CLI does not yet expose those
-breakdowns through `chatter cache stats --json`, so the extension
-shows them as zero until the CLI ships the relevant fields.
-
-## Clearing the Cache
-
-### Clear a specific file or directory
-
-In the [Validation Explorer](../workflows/corpus-validation.md), right-click on a file or folder and select **Clear Cache**. This removes cached results only for the selected items, forcing revalidation on the next run.
-
-### Clear the entire cache
-
-Open the Command Palette and select **TalkBank: Clear All Validation Cache**. This deletes all cached entries from the database.
-
-You can also use the `--force` flag with the CLI to bypass the cache for a specific run:
+The equivalent CLI operations are
 
 ```bash
-chatter validate path/to/corpus/ --force
+chatter cache clear --prefix path/to/corpus/
+chatter cache clear --prefix path/to/corpus/ --apply
+chatter cache clear --all --apply
 ```
 
-## When to Clear the Cache
+The first command previews. `--apply` performs the removal. To refresh validation
+for one run, use
 
-The cache is content-addressed: if a file changes, its cached result is automatically invalidated. You should not need to manually clear the cache under normal circumstances. Clear the cache when:
+```bash
+chatter validate path/to/corpus/ --refresh-cache
+```
 
-- **After upgrading chatter** -- a new version of the validator may produce different results for the same input. The cache does not automatically detect binary upgrades.
-- **After grammar changes** -- if you are developing the tree-sitter grammar or the parser, cached results from the old grammar are stale.
-- **If results seem stale** -- if validation results do not match what you expect after editing a file, clearing the cache rules out staleness as the cause.
-- **If the cache becomes corrupted** -- SQLite corruption is rare but possible after a system crash. Deleting and recreating the cache is the simplest fix.
+## Cache ownership
 
-## Cache Design
+The CLI chooses the operating-system cache directory and owns inspection,
+schema migration and mutation. Cache statistics are a read-only observation.
+An older schema migrates during a writing operation. Use the current CLI's
+help and [Chatter cache documentation](https://talkbank.github.io/chatter/chatter/user-guide/cli-reference.html)
+for its validation-policy and reuse rules.
 
-The cache is managed by the `chatter` CLI binary, not the extension's TypeScript code. The extension's `CacheManager` (`cacheManager.ts`) polls the CLI for statistics and invokes CLI commands for cache operations. The Validation Explorer also uses the CLI (`chatter validate --format json`) for bulk validation, and the CLI handles cache reads and writes transparently.
-
-This design means the cache is shared between the VS Code extension and direct CLI usage. Validating files from the terminal benefits from the same cache, and vice versa.
+```mermaid
+flowchart TD
+    poll[CLI cache inspection] --> wire[Tagged JSON admission]
+    wire --> absent[Absent database]
+    wire --> older[Older schema]
+    wire --> current[Current database and storage facts]
+    absent --> display[Status and details]
+    older --> display
+    current --> display
+    selection[Selected cache scope] --> preview[CLI preview]
+    preview --> confirmation[User confirmation]
+    confirmation --> apply[CLI apply operation]
+    apply --> refresh[Refresh observed statistics]
+```
 
 ## Related Chapters
 
-- [Corpus Validation](../workflows/corpus-validation.md) -- the Validation Explorer tree view
-- [Settings Reference](settings.md) -- `talkbank.validation.severity` and other settings
-- [Troubleshooting: Common Issues](../troubleshooting/common-issues.md) -- resolving stale cache issues
+- [Corpus Validation](../workflows/corpus-validation.md)
+- [Settings Reference](settings.md)

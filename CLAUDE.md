@@ -1,28 +1,28 @@
 # VS Code Extension, TalkBank CHAT Editor
 
-**Status:** Dormant but resumable.
-**Last updated:** 2026-06-24 08:10 EDT
+**Status:** Maintained LSP consumer reference.
+**Last updated:** 2026-11-13
 
 ## Repo status and provenance
 
 This is `TalkBank/chatter-vscode`: the standalone home of the CHAT VS Code
 extension and its book. It was extracted from `TalkBank/chatter` on 2026-06-15
-when active extension development paused, and is preserved here so it can be
-resumed if demand reappears. The canonical recovery point, with the full git
+when active extension development paused. Its core editor integration is kept
+current with Chatter as a concrete consumer of the LSP contract. The canonical recovery point, with the full git
 history (including the LSP `talkbank/analyze` analysis bridge the extension once
 consumed), is the `pre-clan-vscode-extraction` tag in `TalkBank/chatter`.
 
-**If resumed (intended architecture):** the extension should obtain CLAN
-analysis by **shelling out to the real CLAN CLI**, not via the removed
-`talkbank-clan` reimplementation, and use chatter's core LSP only for CHAT
-diagnostics and parsing. The old `talkbank/analyze` LSP bridge to the
-reimplementation was removed with the extraction by design; do not restore it.
+CLAN analysis runs in `chatter-clan-lsp`, a composed Rust server linking
+Chatter's editor library and the `talkbank-clan` analysis library. Select its
+binary with `talkbank.lsp.binaryPath`, or use a VSIX that bundles it. The server
+advertises the available commands and required prompts. The core editor RPCs
+remain owned by Chatter. Command coverage and numerical parity follow the
+[chatter-clan parity record](https://talkbank.github.io/chatter-clan/parity-status.html).
 
-The extension is now at the **repo root** (no `vscode/` subdirectory; that
-nesting was an extraction artifact, lifted out 2026-06-24). The language server
-ships as a standalone, signed artifact of the chatter release; the release
-workflow downloads the per-platform `talkbank-lsp` from the pinned chatter
-release rather than building it here (see `book/src/developer/releasing.md`).
+The extension lives at the repository root. Its release workflow builds the
+composed server from an exact chatter-clan commit for each platform and stages
+it at `server/talkbank-lsp[.exe]`. See the releasing chapter for publication order
+and exact-artifact qualification.
 
 All user, developer, and integrator documentation lives in **`book/`**
 (mdBook). The book is the single source of truth for this extension:
@@ -40,7 +40,7 @@ a book chapter.
 
 ## Overview
 
-VS Code extension providing real-time validation, CLAN analysis, media playback,
+VS Code extension providing real-time validation, media playback,
 transcription mode, waveform visualization, dependency graphs, and speaker filtering
 for CHAT format files. Backed by the `talkbank-lsp` Rust binary over stdio.
 
@@ -78,29 +78,13 @@ The TypeScript side is one more layer away from the grammar and model
 source of truth than the LSP itself. The cost of reconstructing domain
 semantics here is higher still, always route through the LSP.
 
-## Three-layer architecture
+## Downstream composition
 
-```
-┌──────────────────────────────────────────────────┐
-│  VS Code Extension (TypeScript)                  │
-│  commands · webviews · tree views · keybindings  │  ← this repo
-│  state machines: coder / review / transcribe     │
-│  LSP client (vscode-languageclient)              │
-└───────────────────┬──────────────────────────────┘
-                    │ LSP stdio + `talkbank/*` RPC
-┌───────────────────┴──────────────────────────────┐
-│  talkbank-lsp (Rust binary)                      │
-│  protocol routing · document state · caches      │  ← crates/talkbank-lsp/
-│  LSP features + custom talkbank/* RPC endpoints  │
-│  hover/highlight/graph rendering (presentation)  │
-└───────────────────┬──────────────────────────────┘
-                    │ crate-internal calls
-┌───────────────────┴──────────────────────────────┐
-│  talkbank-{model,parser,transform,clan}          │
-│  grammar · model types · validation · alignment  │  ← crates/talkbank-*/
-│  CLAN command semantics · CHAT serialization     │
-└──────────────────────────────────────────────────┘
-```
+The extension connects to `chatter-clan-lsp`. That binary lives in
+`chatter-clan` and links Chatter's `talkbank-lsp` library alongside
+`talkbank-clan`. The CLAN library consumes Chatter's admitted CHAT model.
+The [architecture chapter](book/src/developer/architecture.md) owns the
+composition, document lifecycle and resource-ownership diagrams.
 
 ## Project Structure
 
@@ -126,9 +110,10 @@ vscode/
 ## Key Commands
 
 ```bash
-cd vscode && npm install && npm run compile
-cd vscode && npm test          # vitest
-cd vscode && npm run lint      # eslint
+npm ci
+npm run compile
+npm exec vitest run src/test/activationLsp.test.ts src/test/executeCommandClient.test.ts
+bash scripts/run-integration-tests.sh /absolute/path/to/talkbank-lsp
 ```
 
 ## Features & Shortcuts
@@ -141,14 +126,13 @@ cd vscode && npm run lint      # eslint
 | Rewind | F8 | Rewind 2 seconds |
 | Loop Segment | F5 | Toggle loop |
 | Walker | Alt+Down/Up | Step through utterances with playback |
-| CLAN Analysis | Context menu | CLAN commands → analysis panel |
 | Transcription | Command palette | F4 to stamp timing bullets |
 | Speaker Filter | Context menu | Virtual document by speaker |
 | Waveform | Cmd+Shift+W | Web Audio waveform visualization |
 
 ## LSP Binary Discovery
 
-`findLspBinary()` searches: system PATH (via `which`) → `target/debug/` → `target/release/`.
+`findTalkbankLspBinary()` searches the configured path, bundled server, system PATH, then development debug/release builds. Native calls use literal argument vectors.
 
 ## Webview Pattern
 
@@ -157,10 +141,12 @@ protocol (rewind, setLoop, seekTo, segmentChanged).
 
 ## Analysis Commands
 
-All CLAN commands are wired: freq, mlu, mlt, wdlen, wdsize, maxwd, freqpos, timedur,
-gemlist, cooccur, dist, chip, phonfreq, modrep, vocd, codes, complexity, corelex, chains,
-dss, eval, flucalc, ipsyn, kideval, sugar, trnfix, uniq, plus those requiring user input
-(kwal, combo, keymap, mortable, script, rely).
+The five analysis commands use `ClanClient` and the custom methods
+`clan/capabilities`, `clan/analyze` and `clan/databases`. Rust owns command
+semantics. `AnalysisSelection` admits required UI input and `ClanResult`
+retains dispatch-time document identity through presentation. General analysis
+and normative panels own cancellation. Configure `talkbank.clan.libraryDirectory`
+for local normative databases.
 
 ## Dependencies
 
@@ -168,9 +154,21 @@ dss, eval, flucalc, ipsyn, kideval, sugar, trnfix, uniq, plus those requiring us
 
 - `vscode-languageclient`: LSP client
 - `@hpcc-js/wasm`: Graphviz WASM
-- TypeScript, ESLint, Vitest
+- TypeScript 7 with strict unused checks, Effect 4, Vitest 5
 
 ## Detailed Documentation
+
+Design the whole provenance graph before retaining tests. Carry source identity,
+computed artifacts and admission proofs through consuming transitions. Use
+state-specific payloads and discriminated unions, with private constructors.
+Rust phantom states can share implementations while restricting operations to
+checked phases. Remove bypass fixture APIs, duplicate work and obsolete tests.
+Use typestate and validated boundary types for state transitions. Review every
+test and harness created, changed or deliberately reviewed. Retained tests
+document Guards, Kind, Not a type, State and Concurrency in their
+doc comment. Keep external editor and wire-boundary tests focused on observable
+contracts. A current TypeScript build and real-client qualification are separate
+evidence. Record the exact selected server and editor versions for host journeys.
 
 All user and developer documentation lives in **`book/`** (mdBook). Read
 `book/src/introduction.md` as the entry point; `book/src/SUMMARY.md`

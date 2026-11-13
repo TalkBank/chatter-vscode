@@ -94,7 +94,7 @@
 - [Custom Commands](developer/custom-commands.md)
 - [LSP Protocol](developer/lsp-protocol.md)
 - [Testing](developer/testing.md)
-- [CLAN Feature Parity](developer/clan-parity.md)
+- [CLAN Parity and Remaining Work](developer/clan-parity.md)
 - [Releasing](developer/releasing.md)
 
 # Design Decisions

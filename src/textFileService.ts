@@ -5,8 +5,6 @@
  * service keeps file reads injectable and routes failures through Effect.
  */
 
-/* eslint-disable @typescript-eslint/naming-convention */
-
 import { promises as fs } from 'fs';
 
 import { Context } from 'effect';
@@ -14,7 +12,7 @@ import { Context } from 'effect';
 /**
  * Text-file reader used by extension commands.
  */
-export interface TextFileService {
+export interface TextFileReader {
     /**
      * Read one UTF-8 text file asynchronously.
      */
@@ -24,14 +22,12 @@ export interface TextFileService {
 /**
  * Effect service for text-file reads.
  */
-export const TextFileService = Context.GenericTag<TextFileService>(
-    'talkbank/TextFileService',
-);
+export class TextFileService extends Context.Service<TextFileService, TextFileReader>()('talkbank/TextFileService') {}
 
 /**
  * Default Node-backed text-file reader.
  */
-export class NodeTextFileService implements TextFileService {
+export class NodeTextFileService implements TextFileReader {
     /**
      * Read one UTF-8 file from the local filesystem.
      */

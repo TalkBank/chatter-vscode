@@ -1,5 +1,6 @@
 # Frequency & Distribution
 
+
 **Status:** Current
 **Last updated:** 2026-05-21 13:35 EDT
 
@@ -190,3 +191,11 @@ measures:
 - [Profiling Commands](profiling.md) -- MLU, MLT, VOCD, DSS, IPSyn
 - [Assessment Tools](assessment.md) -- KidEval, Eval, Eval-D
 - [Command Reference](command-reference.md) -- every CLAN command wired into the extension, in one table
+
+### Nested results and CSV
+
+The panel shows separate word/count tables for each speaker and a speaker
+summary. Nested report objects are prepared into scalar-only tables in the
+extension. The browser reuses the prepared columns, numeric maxima and rows.
+A table preview shows at most 200 rows. CSV export includes every prepared row,
+including rows beyond the preview, and preserves zero and false cell values.

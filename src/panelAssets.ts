@@ -9,24 +9,18 @@ export interface WebviewPanelAssetPaths {
     scriptPath: string;
 }
 
-export function resolveExtensionAssetPath(
-    context: ExtensionAssetPathContext,
-    relativePath: string,
-): string {
-    return context.asAbsolutePath(relativePath);
-}
+type PanelName = 'analysisPanel' | 'graphPanel' | 'idEditorPanel'
+    | 'kidevalPanel' | 'mediaPanel' | 'waveformPanel';
 
 export function resolveWebviewPanelAssetPaths(
     context: ExtensionAssetPathContext,
-    panelName: string,
+    panelName: PanelName,
 ): WebviewPanelAssetPaths {
     return {
-        htmlPath: resolveExtensionAssetPath(
-            context,
+        htmlPath: context.asAbsolutePath(
             path.join('out', 'webview', `${panelName}.html`),
         ),
-        scriptPath: resolveExtensionAssetPath(
-            context,
+        scriptPath: context.asAbsolutePath(
             path.join('out', 'webview', `${panelName}.js`),
         ),
     };

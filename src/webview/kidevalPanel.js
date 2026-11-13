@@ -38,23 +38,21 @@ const dbGrid = document.getElementById('db-grid');
 
 let databases = [];
 let selectedDbPath = '';
-let fileLanguage = '';
-let fileActivity = '';
 
 // -- Language / activity name maps ----------------------------------------
-const LANGUAGE_NAMES = {
+const LANGUAGE_NAMES = new Map(Object.entries({
     eng: 'English (NA)', engu: 'English (UK)', fra: 'French',
     jpn: 'Japanese', spa: 'Spanish', zho: 'Chinese',
     nld: 'Dutch', yue: 'Cantonese', hrv: 'Croatian',
     deu: 'German', ell: 'Greek', eus: 'Basque',
     tha: 'Thai', por: 'Portuguese', ind: 'Indonesian',
-};
+}));
 
-const ACTIVITY_NAMES = {
+const ACTIVITY_NAMES = new Map(Object.entries({
     narrative: 'Narrative', toyplay: 'Toyplay',
     eval: 'Evaluation', 'eval-d': 'Dementia Eval',
     general: 'General',
-};
+}));
 
 // -- Apply mode config to header ------------------------------------------
 document.getElementById('cmd-eyebrow').textContent =
@@ -63,8 +61,14 @@ document.getElementById('cmd-display').textContent = MODE_CONFIG.title;
 document.getElementById('cmd-description').textContent = MODE_CONFIG.description;
 
 // -- Initialize -----------------------------------------------------------
-vscode.postMessage({ command: 'discoverDatabases', libDir: MODE_CONFIG.defaultLibDir });
-setStatus('Discovering databases\u2026', false);
+if (MODE_CONFIG.defaultLibDir) {
+    vscode.postMessage({ command: 'discoverDatabases', libDir: MODE_CONFIG.defaultLibDir });
+    setStatus('Discovering databases\u2026', false);
+} else {
+    langSelect.innerHTML = '<option value="">Library directory required</option>';
+    dbGrid.textContent = 'Set the CLAN library directory to discover databases.';
+    setStatus('Set talkbank.clan.libraryDirectory to compare with a database, or run without one.', false);
+}
 
 // -- Event listeners ------------------------------------------------------
 
@@ -91,15 +95,22 @@ window.addEventListener('message', (event) => {
             handleResults(msg.data);
             break;
         case 'error':
+            switch (msg.operation) {
+                case 'discovery':
+                    langSelect.innerHTML = '<option value="">Discovery failed</option>';
+                    activitySelect.innerHTML = '<option value="">—</option>';
+                    dbGrid.textContent = 'Database discovery failed. Correct the library directory and reopen this panel to retry.';
+                    break;
+                case 'analysis':
+                    btnRun.disabled = !selectedDbPath;
+                    btnRunNoDb.disabled = false;
+                    break;
+                case 'export': break;
+            }
             setStatus(msg.message, true);
             break;
         case 'fileInfo':
             fileNameEl.textContent = msg.fileName;
-            // Auto-detect language and activity from file metadata
-            if (msg.language) { fileLanguage = msg.language; }
-            if (msg.activity) { fileActivity = msg.activity; }
-            // Re-apply auto-detection if databases are already loaded
-            if (databases.length > 0) { applyAutoDetection(); }
             break;
     }
 });
@@ -124,28 +135,14 @@ function handleDatabases(dbs) {
     for (const lang of langs) {
         const opt = document.createElement('option');
         opt.value = lang;
-        opt.textContent = LANGUAGE_NAMES[lang] || lang;
+        opt.textContent = LANGUAGE_NAMES.get(lang) || lang;
         langSelect.appendChild(opt);
     }
 
     // Render availability grid
     renderAvailabilityGrid(databases);
 
-    // Auto-detect from file metadata
-    applyAutoDetection();
-
     setStatus('Select language and activity, then compare with database.', false);
-}
-
-function applyAutoDetection() {
-    if (fileLanguage && langSelect.querySelector(`option[value="${fileLanguage}"]`)) {
-        langSelect.value = fileLanguage;
-        onLanguageChange();
-    }
-    if (fileActivity && activitySelect.querySelector(`option[value="${fileActivity}"]`)) {
-        activitySelect.value = fileActivity;
-        onActivityChange();
-    }
 }
 
 function onLanguageChange() {
@@ -162,14 +159,14 @@ function onLanguageChange() {
         // Auto-select the only activity
         const opt = document.createElement('option');
         opt.value = activities[0];
-        opt.textContent = ACTIVITY_NAMES[activities[0]] || activities[0];
+        opt.textContent = ACTIVITY_NAMES.get(activities[0]) || activities[0];
         activitySelect.appendChild(opt);
     } else {
         activitySelect.innerHTML = '<option value="">Select activity…</option>';
         for (const act of activities) {
             const opt = document.createElement('option');
             opt.value = act;
-            opt.textContent = ACTIVITY_NAMES[act] || act;
+            opt.textContent = ACTIVITY_NAMES.get(act) || act;
             activitySelect.appendChild(opt);
         }
     }
@@ -190,8 +187,8 @@ function onActivityChange() {
         dbInfoPanel.style.display = '';
         const fileName = match.name || (match.path ? match.path.split('/').pop() : '');
         dbInfoName.textContent = fileName;
-        const langName = LANGUAGE_NAMES[match.language] || match.language || '';
-        const actName = ACTIVITY_NAMES[match.corpus_type] || match.corpus_type || '';
+        const langName = LANGUAGE_NAMES.get(match.language) || match.language || '';
+        const actName = ACTIVITY_NAMES.get(match.corpus_type) || match.corpus_type || '';
         const count = match.entry_count != null ? `${match.entry_count} samples` : '';
         dbInfoDetails.textContent = [count, langName, actName].filter(Boolean).join(' \u00b7 ');
         selectedDbPath = match.path;
@@ -205,34 +202,38 @@ function onActivityChange() {
     highlightGridCell(lang, activity);
 }
 
+function escapeHtml(value) {
+    return String(value).replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]);
+}
+
 function renderAvailabilityGrid(dbs) {
     const langs = [...new Set(dbs.map(db => db.language).filter(Boolean))].sort();
     const activities = [...new Set(dbs.map(db => db.corpus_type).filter(Boolean))].sort();
 
     // Build lookup: {lang: {activity: db}}
-    const lookup = {};
+    const lookup = Object.create(null);
     for (const db of dbs) {
         if (!db.language || !db.corpus_type) continue;
-        if (!lookup[db.language]) lookup[db.language] = {};
+        if (!lookup[db.language]) lookup[db.language] = Object.create(null);
         lookup[db.language][db.corpus_type] = db;
     }
 
     let html = '<thead><tr><th></th>';
     for (const act of activities) {
-        html += `<th>${ACTIVITY_NAMES[act] || act}</th>`;
+        html += `<th>${escapeHtml(ACTIVITY_NAMES.get(act) || act)}</th>`;
     }
     html += '</tr></thead><tbody>';
 
     for (const lang of langs) {
-        html += `<tr><td class="grid-lang">${LANGUAGE_NAMES[lang] || lang}</td>`;
+        html += `<tr><td class="grid-lang">${escapeHtml(LANGUAGE_NAMES.get(lang) || lang)}</td>`;
         for (const act of activities) {
             const db = lookup[lang] && lookup[lang][act];
             if (db) {
                 const count = db.entry_count != null ? db.entry_count : '';
                 html += `<td class="grid-cell grid-available" `
-                    + `data-lang="${lang}" data-activity="${act}" `
-                    + `title="${count} samples">`
-                    + `\u25cf ${count}</td>`;
+                    + `data-lang="${escapeHtml(lang)}" data-activity="${escapeHtml(act)}" `
+                    + `title="${escapeHtml(count)} samples">`
+                    + `\u25cf ${escapeHtml(count)}</td>`;
             } else {
                 html += '<td class="grid-cell grid-empty">\u2014</td>';
             }
@@ -260,7 +261,7 @@ function highlightGridCell(lang, activity) {
     });
     if (lang && activity) {
         const cell = dbGrid.querySelector(
-            `.grid-available[data-lang="${lang}"][data-activity="${activity}"]`
+            `.grid-available[data-lang="${CSS.escape(lang)}"][data-activity="${CSS.escape(activity)}"]`
         );
         if (cell) cell.classList.add('grid-selected');
     }
@@ -269,7 +270,13 @@ function highlightGridCell(lang, activity) {
 // -- Run analysis ---------------------------------------------------------
 
 function runAnalysis(withDatabase) {
-    setStatus('<span class="spinner"></span>Running KidEval analysis…', false);
+    if (withDatabase && (!ageFrom.reportValidity() || !ageTo.reportValidity())) {
+        return;
+    }
+    setStatus(`Running ${MODE_CONFIG.title} analysis…`, false);
+    const spinner = document.createElement('span');
+    spinner.className = 'spinner';
+    statusEl.prepend(spinner);
     resultsEl.innerHTML = '';
     btnRun.disabled = true;
     btnRunNoDb.disabled = true;
@@ -290,11 +297,11 @@ function buildFilter() {
     const gender = genderSelect.value;
     if (gender) { filter.gender = gender; }
 
-    const from = parseInt(ageFrom.value, 10);
-    if (!isNaN(from) && from > 0) { filter.age_from_months = from; }
+    const from = Number(ageFrom.value);
+    if (ageFrom.value !== '') { filter.age_from_months = from; }
 
-    const to = parseInt(ageTo.value, 10);
-    if (!isNaN(to) && to > 0) { filter.age_to_months = to; }
+    const to = Number(ageTo.value);
+    if (ageTo.value !== '') { filter.age_to_months = to; }
 
     return Object.keys(filter).length > 0 ? filter : undefined;
 }
@@ -535,7 +542,7 @@ function formatNum(n) {
 }
 
 function setStatus(html, isError) {
-    statusEl.innerHTML = html;
+    statusEl.textContent = html;
     statusEl.className = isError ? 'status error' : 'status';
 }
 

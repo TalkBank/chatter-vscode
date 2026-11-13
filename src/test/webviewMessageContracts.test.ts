@@ -2,24 +2,10 @@
  * Tests for shared webview/panel message contracts.
  */
 
-/* eslint-disable @typescript-eslint/naming-convention */
 import { describe, expect, it } from 'vitest';
 
 import { PanelMessageDecodeError } from '../effectBoundary';
-import type { TimestampMs } from '../utils/bulletParser';
 import {
-    createIdEditorEntriesMessage,
-    createIdEditorErrorMessage,
-    createIdEditorSavedMessage,
-    createKidevalDatabasesMessage,
-    createKidevalErrorMessage,
-    createKidevalFileInfoMessage,
-    createKidevalResultsMessage,
-    createMediaRequestTimestampMessage,
-    createMediaRewindMessage,
-    createMediaSeekToMessage,
-    createMediaSetLoopMessage,
-    createWaveformHighlightSegmentMessage,
     decodeAnalysisPanelWebviewMessage,
     decodeIdEditorPanelWebviewMessage,
     decodeKidevalPanelWebviewMessage,
@@ -28,6 +14,13 @@ import {
 } from '../webviewMessageContracts';
 
 describe('webview message contracts', () => {
+    /**
+     * Guards: CSV export accepts text and rejects numeric CSV payloads.
+     * Kind: wire
+     * Not a type: the browser sends unknown messages across the webview bridge.
+     * State: exact in-memory payload values, with no browser, disk or process state.
+     * Concurrency: none, synchronous admission is local to each payload.
+     */
     it('decodes analysis CSV export requests', () => {
         expect(decodeAnalysisPanelWebviewMessage({
             command: 'exportCsv',
@@ -43,7 +36,14 @@ describe('webview message contracts', () => {
         })).toThrow(PanelMessageDecodeError);
     });
 
-    it('decodes ID editor save requests and builds extension messages', () => {
+    /**
+     * Guards: ID editor save messages retain their participant fields.
+     * Kind: wire
+     * Not a type: browser JSON must pass schema admission before typed editing.
+     * State: exact in-memory payload values, with no browser, disk or process state.
+     * Concurrency: none, synchronous admission is local to each payload.
+     */
+    it('decodes ID editor save requests', () => {
         const entries = [
             {
                 line: 3,
@@ -70,21 +70,18 @@ describe('webview message contracts', () => {
             entries,
         });
 
-        expect(createIdEditorEntriesMessage(entries, 'sample.cha')).toEqual({
-            command: 'entries',
-            entries,
-            fileName: 'sample.cha',
-        });
 
-        expect(createIdEditorSavedMessage()).toEqual({ command: 'saved' });
-        expect(createIdEditorErrorMessage('boom')).toEqual({
-            command: 'error',
-            message: 'boom',
-        });
     });
 
-    it('decodes media panel messages and builds media control messages', () => {
-        const timestamp = 1250 as TimestampMs;
+    /**
+     * Guards: media timestamps and segment messages decode while negative indices fail.
+     * Kind: wire
+     * Not a type: browser events contain numeric values before admission.
+     * State: exact in-memory payload values, with no browser, disk or process state.
+     * Concurrency: none, synchronous admission is local to each payload.
+     */
+    it('decodes media panel messages', () => {
+        const timestamp = 1250;
 
         expect(decodeMediaPanelWebviewMessage({
             command: 'segmentChanged',
@@ -113,22 +110,17 @@ describe('webview message contracts', () => {
             index: -1,
         })).toThrow(PanelMessageDecodeError);
 
-        expect(createMediaRewindMessage(2)).toEqual({
-            command: 'rewind',
-            seconds: 2,
-        });
-        expect(createMediaSetLoopMessage()).toEqual({ command: 'setLoop' });
-        expect(createMediaRequestTimestampMessage()).toEqual({
-            command: 'requestTimestamp',
-        });
-        expect(createMediaSeekToMessage(timestamp)).toEqual({
-            command: 'seekTo',
-            ms: timestamp,
-        });
     });
 
-    it('decodes waveform seek requests and builds highlight messages', () => {
-        const timestamp = 900 as TimestampMs;
+    /**
+     * Guards: waveform seek messages reject negative timestamps.
+     * Kind: wire
+     * Not a type: browser JSON can contain a negative timestamp before its admitted timestamp type.
+     * State: exact in-memory payload values, with no browser, disk or process state.
+     * Concurrency: none, synchronous admission is local to each payload.
+     */
+    it('decodes waveform seek requests', () => {
+        const timestamp = 900;
 
         expect(decodeWaveformPanelWebviewMessage({
             command: 'seek',
@@ -143,13 +135,16 @@ describe('webview message contracts', () => {
             ms: -5,
         })).toThrow(PanelMessageDecodeError);
 
-        expect(createWaveformHighlightSegmentMessage(4)).toEqual({
-            command: 'highlightSegment',
-            index: 4,
-        });
     });
 
-    it('decodes kideval messages and builds extension notifications', () => {
+    /**
+     * Guards: assessment messages admit zero-month bounds and reject unknown gender, empty speaker selections and invalid age bounds.
+     * Kind: wire
+     * Not a type: browser JSON can select a variant or gender outside the closed admitted union.
+     * State: exact in-memory payload values, with no browser, disk or process state.
+     * Concurrency: none, synchronous admission is local to each payload.
+     */
+    it('decodes kideval messages', () => {
         expect(decodeKidevalPanelWebviewMessage({
             command: 'discoverDatabases',
             libDir: '/Users/Shared/CLAN/lib/kideval',
@@ -189,6 +184,17 @@ describe('webview message contracts', () => {
             command: 'exportCsv',
             csv: 'measure,z\nmlu,-1.2\n',
         });
+
+        expect(decodeKidevalPanelWebviewMessage({
+            command: 'runAnalysis', databaseFilter: { age_from_months: 0, age_to_months: 0 },
+        })).toEqual({ command: 'runAnalysis', databaseFilter: { age_from_months: 0, age_to_months: 0 } });
+        for (const databaseFilter of [
+            { gendre: 'Female' },
+            { speaker_codes: [] }, { age_from_months: -1 }, { age_to_months: 0x1_0000_0000 },
+        ]) {
+            expect(() => decodeKidevalPanelWebviewMessage({ command: 'runAnalysis', databaseFilter }))
+                .toThrow(PanelMessageDecodeError);
+        }
 
         expect(() => decodeKidevalPanelWebviewMessage({
             command: 'runAnalysis',
@@ -197,35 +203,5 @@ describe('webview message contracts', () => {
             },
         })).toThrow(PanelMessageDecodeError);
 
-        expect(createKidevalFileInfoMessage('sample.cha')).toEqual({
-            command: 'fileInfo',
-            fileName: 'sample.cha',
-        });
-        expect(createKidevalDatabasesMessage([
-            {
-                path: '/Users/Shared/CLAN/lib/kideval/eng.cut',
-                language: 'eng',
-                corpus_type: 'toyplay',
-                display_name: 'ENG (toyplay)',
-            },
-        ])).toEqual({
-            command: 'databases',
-            databases: [
-                {
-                    path: '/Users/Shared/CLAN/lib/kideval/eng.cut',
-                    language: 'eng',
-                    corpus_type: 'toyplay',
-                    display_name: 'ENG (toyplay)',
-                },
-            ],
-        });
-        expect(createKidevalResultsMessage({ ok: true })).toEqual({
-            command: 'results',
-            data: { ok: true },
-        });
-        expect(createKidevalErrorMessage('bad')).toEqual({
-            command: 'error',
-            message: 'bad',
-        });
     });
 });

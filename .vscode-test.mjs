@@ -9,10 +9,15 @@
 // server binary must be staged into server/ so the extension's activation can
 // construct and start the LanguageClient.
 import { defineConfig } from '@vscode/test-cli';
+import path from 'node:path';
 
 export default defineConfig({
     files: 'out/test/integration/**/*.test.js',
-    version: 'stable',
+    version: '1.146.0',
+    extensionDevelopmentPath: process.env.TALKBANK_TEST_EXTENSION_PATH ?? import.meta.dirname,
+    env: {
+        TALKBANK_TEST_REFERENCE: path.join(import.meta.dirname, 'src/test/fixtures/mor-gra.cha'),
+    },
     mocha: {
         ui: 'bdd',
         timeout: 60000,

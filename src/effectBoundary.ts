@@ -2,9 +2,7 @@
  * Shared Effect Schema decoding helpers for extension boundary modules.
  */
 
-/* eslint-disable @typescript-eslint/naming-convention */
-
-import { Data, Schema } from 'effect';
+import { Cause, Data, Schema } from 'effect';
 
 /**
  * Tagged error for one malformed structured LSP response payload.
@@ -23,18 +21,18 @@ export class PanelMessageDecodeError extends Data.TaggedError('PanelMessageDecod
 }> {}
 
 function decodeUnknown<decodedPayload>(
-    schema: Schema.Schema<decodedPayload>,
+    schema: Schema.Decoder<decodedPayload>,
     payload: unknown,
 ): decodedPayload | undefined {
-    const decoded = Schema.decodeUnknownEither(schema)(payload);
-    return decoded._tag === 'Right' ? decoded.right : undefined;
+    const decoded = Schema.decodeUnknownExit(schema)(payload);
+    return decoded._tag === 'Success' ? decoded.value : undefined;
 }
 
 /**
  * Parse one payload with an Effect Schema, returning `undefined` on failure.
  */
 export function parseWithSchema<decodedPayload>(
-    schema: Schema.Schema<decodedPayload>,
+    schema: Schema.Decoder<decodedPayload>,
     payload: unknown,
 ): decodedPayload | undefined {
     return decodeUnknown(schema, payload);
@@ -46,21 +44,21 @@ export function parseWithSchema<decodedPayload>(
 export function decodeStructuredWithSchema<decodedPayload>(
     command: string,
     payload: unknown,
-    schema: Schema.Schema<decodedPayload>,
+    schema: Schema.Decoder<decodedPayload>,
 ): decodedPayload {
     if (typeof payload === 'string') {
         throw new Error(payload);
     }
 
-    const decoded = Schema.decodeUnknownEither(schema)(payload);
-    if (decoded._tag === 'Left') {
+    const decoded = Schema.decodeUnknownExit(schema)(payload);
+    if (decoded._tag === 'Failure') {
         throw new StructuredPayloadDecodeError({
             command,
-            details: decoded.left.message,
+            details: Cause.pretty(decoded.cause),
         });
     }
 
-    return decoded.right;
+    return decoded.value;
 }
 
 /**
@@ -69,15 +67,15 @@ export function decodeStructuredWithSchema<decodedPayload>(
 export function decodePanelMessageWithSchema<decodedPayload>(
     label: string,
     payload: unknown,
-    schema: Schema.Schema<decodedPayload>,
+    schema: Schema.Decoder<decodedPayload>,
 ): decodedPayload {
-    const decoded = Schema.decodeUnknownEither(schema)(payload);
-    if (decoded._tag === 'Left') {
+    const decoded = Schema.decodeUnknownExit(schema, { onExcessProperty: 'error' })(payload);
+    if (decoded._tag === 'Failure') {
         throw new PanelMessageDecodeError({
             label,
-            details: decoded.left.message,
+            details: Cause.pretty(decoded.cause),
         });
     }
 
-    return decoded.right;
+    return decoded.value;
 }

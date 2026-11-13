@@ -15,6 +15,7 @@
  *   requestTimestamp) and dispatch responses.
  */
 
+import { injectPanelScript } from './webviewScript';
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { decodePanelMessage, disposePanelResources, reuseOrCreatePanel } from './panelLifecycle';
@@ -330,22 +331,12 @@ export class MediaPanel {
         const pauseSeconds = this._runtimeContext.getWalkerPauseSeconds();
         const walkLength = this._runtimeContext.getWalkerWalkLength();
 
-        // Build the data injection script block.
-        const dataScript = `<script>
-    const SEGMENTS      = ${JSON.stringify(segments)};
-    const MEDIA_URI     = ${JSON.stringify(mediaUri)};
-    const START_IDX     = ${JSON.stringify(startIndex)};
-    const IS_VIDEO      = ${JSON.stringify(isVideo)};
-    const DEFAULT_SPEED = ${JSON.stringify(defaultSpeed)};
-    const LOOP_COUNT    = ${JSON.stringify(loopCount)};
-    const PAUSE_MS      = ${JSON.stringify(Math.round(pauseSeconds * 1000))};
-    const WALK_LENGTH   = ${JSON.stringify(walkLength)};
-</script>`;
-
-        // Replace placeholders.
         html = html.replace('<!--INJECT_MEDIA_TAG-->', mediaTag);
-        html = html.replace('<!--INJECT_DATA-->', dataScript);
-        html = html.replace('<!--INJECT_SCRIPT-->', `<script src="${jsUri}"></script>`);
+        html = injectPanelScript(html, {
+            kind: isVideo ? 'video' : 'audio', segments, mediaUri, startIndex,
+            defaultSpeed, loopCount, pauseMilliseconds: Math.round(pauseSeconds * 1000), walkLength,
+        });
+        html = html.replace('<!--INJECT_SCRIPT-->', () => `<script src="${jsUri}"></script>`);
 
         return html;
     }

@@ -8,6 +8,7 @@
 // `vscode` is always resolved at runtime by the host; never bundle it.
 
 import { build, context } from 'esbuild';
+import { copyFile, mkdir } from 'node:fs/promises';
 
 const watchMode = process.argv.includes('--watch');
 const production = process.argv.includes('--production');
@@ -18,12 +19,16 @@ const buildOptions = {
     outfile: 'dist/extension.js',
     external: ['vscode'],
     platform: 'node',
-    target: 'node20',
+    target: 'node24',
     format: 'cjs',
     sourcemap: !production,
     minify: production,
     logLevel: 'info',
 };
+
+// The browser webview imports this standalone ESM/WASM asset separately.
+await mkdir('dist/vendor', { recursive: true });
+await copyFile('node_modules/@hpcc-js/wasm/dist/graphviz.js', 'dist/vendor/graphviz.js');
 
 if (watchMode) {
     const ctx = await context(buildOptions);

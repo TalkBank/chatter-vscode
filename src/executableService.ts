@@ -1,4 +1,4 @@
-import { execSync, spawn, type SpawnOptions } from 'child_process';
+import { execFileSync, spawn, type ExecFileSyncOptionsWithStringEncoding, type SpawnOptions } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import type * as vscode from 'vscode';
@@ -12,7 +12,32 @@ function platformBinaryName(binaryName: string): string {
     return process.platform === 'win32' ? `${binaryName}.exe` : binaryName;
 }
 
-export type ExecSyncFn = (command: string, options: any) => Buffer | string;
+export type ExecFileSyncFn = (
+    executable: string,
+    args: readonly string[],
+    options: ExecFileSyncOptionsWithStringEncoding,
+) => string;
+export type ExtensionPaths = Pick<vscode.ExtensionContext, 'asAbsolutePath'>;
+
+/** A native process exited with captured output, admitted at the OS boundary. */
+export class CliExitError extends Error {
+    private constructor(
+        readonly exitCode: number,
+        readonly stdout: string,
+        message: string,
+    ) {
+        super(message);
+    }
+
+    static fromNative(error: unknown): CliExitError | undefined {
+        if (typeof error !== 'object' || error === null || !('status' in error)
+            || typeof error.status !== 'number' || !('stdout' in error)
+            || typeof error.stdout !== 'string') {
+            return undefined;
+        }
+        return new CliExitError(error.status, error.stdout, error instanceof Error ? error.message : 'CLI exited unsuccessfully');
+    }
+}
 export type SpawnFn = (
     command: string,
     args: readonly string[],
@@ -25,7 +50,7 @@ export interface ExecutableServiceOptions {
     fs?: {
         existsSync: (path: string) => boolean;
     };
-    execSync?: ExecSyncFn;
+    execFileSync?: ExecFileSyncFn;
     spawn?: SpawnFn;
 }
 
@@ -44,7 +69,7 @@ export interface ClanExecutableService {
 }
 
 export interface LspExecutableService {
-    findTalkbankLspBinary(context: vscode.ExtensionContext, configuredPath?: string): string | null;
+    findTalkbankLspBinary(context: ExtensionPaths, configuredPath?: string): string | null;
 }
 
 /**
@@ -60,12 +85,12 @@ export class ExecutableService implements
         existsSync: (path: string) => boolean;
     };
 
-    private readonly execSyncFn: ExecSyncFn;
+    private readonly execFileSyncFn: ExecFileSyncFn;
     private readonly spawnFn: SpawnFn;
 
     constructor(options: ExecutableServiceOptions = {}) {
         this.fsOps = options.fs ?? fs;
-        this.execSyncFn = options.execSync ?? execSync;
+        this.execFileSyncFn = options.execFileSync ?? execFileSync;
         this.spawnFn = options.spawn ?? ((command, args, spawnOptions) =>
             spawn(command, args, spawnOptions));
     }
@@ -86,16 +111,17 @@ export class ExecutableService implements
     }
 
     runTalkBankCli(cliPath: string, args: string[]): string {
-        const command = [this.quoteExecutable(cliPath), ...args.map(arg => this.quoteArgument(arg))]
-            .join(' ');
-        const output = this.execSyncFn(command, {
-            encoding: 'utf-8',
-            stdio: ['pipe', 'pipe', 'pipe'],
-        });
-        return output.toString().trim();
+        try {
+            return this.execFileSyncFn(cliPath, args, {
+                encoding: 'utf-8',
+                stdio: ['pipe', 'pipe', 'pipe'],
+            }).trim();
+        } catch (error) {
+            throw CliExitError.fromNative(error) ?? error;
+        }
     }
 
-    findTalkbankLspBinary(context: vscode.ExtensionContext, configuredPath = ''): string | null {
+    findTalkbankLspBinary(context: ExtensionPaths, configuredPath = ''): string | null {
         if (configuredPath && this.fsOps.existsSync(configuredPath)) {
             return configuredPath;
         }
@@ -155,11 +181,9 @@ export class ExecutableService implements
     private findOnPath(command: string): string | null {
         // Use platform-appropriate path discovery: `where.exe` on Windows,
         // `which` on Unix. Both return the full path to the executable.
-        const whichCommand = process.platform === 'win32'
-            ? `where.exe ${command}`
-            : `which ${command}`;
+        const locator = process.platform === 'win32' ? 'where.exe' : 'which';
         try {
-            const result = this.execSyncFn(whichCommand, {
+            const result = this.execFileSyncFn(locator, [command], {
                 encoding: 'utf-8',
                 stdio: ['pipe', 'pipe', 'pipe'],
             });
@@ -185,7 +209,7 @@ export class ExecutableService implements
     }
 
     private findExtensionTargetBinary(
-        context: vscode.ExtensionContext,
+        context: ExtensionPaths,
         binaryName: string,
     ): string | null {
         for (const profile of ['debug', 'release']) {
@@ -209,7 +233,7 @@ export class ExecutableService implements
      * dev-tree checkout that has not staged a binary.
      */
     private findBundledBinary(
-        context: vscode.ExtensionContext,
+        context: ExtensionPaths,
         binaryName: string,
     ): string | null {
         const candidate = context.asAbsolutePath(
@@ -218,14 +242,4 @@ export class ExecutableService implements
         return this.fsOps.existsSync(candidate) ? candidate : null;
     }
 
-    private quoteExecutable(value: string): string {
-        return JSON.stringify(value);
-    }
-
-    private quoteArgument(value: string): string {
-        if (value.startsWith('/') || value.includes('\\') || /\s|"/.test(value) || value === '') {
-            return JSON.stringify(value);
-        }
-        return value;
-    }
 }

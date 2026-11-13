@@ -170,7 +170,7 @@ export function startCoderMode(): Effect.Effect<void, unknown, ExtensionCommandR
 
         const codesPath = files[0].fsPath;
         const codesText = yield* tryAsync('read codes file', () => textFiles.readUtf8(codesPath)).pipe(
-            Effect.catchAll(cause => Effect.gen(function*() {
+            Effect.catch(cause => Effect.gen(function*() {
             yield* Effect.asVoid(tryAsync('show codes file read error', () => Promise.resolve(
                 window.showErrorMessage(`Failed to read codes file: ${String(cause)}`),
             )));

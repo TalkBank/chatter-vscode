@@ -1,12 +1,21 @@
 # Command Reference
 
-**Status:** Current
-**Last updated:** 2026-05-21 13:40 EDT
 
-Complete reference for all 33 CLAN analysis commands available in the
-TalkBank extension. Run any command via right-click **Run CLAN
-Analysis...** or the Command Palette. See
-[Running CLAN Commands](running-commands.md) for the general workflow.
+**Status:** Current
+**Last updated:** 2026-11-13
+
+The picker currently exposes 34 command names. Most use library-default
+options. Keyword/search, secondary input, template and MORTABLE script prompts
+are exposed, along with the dedicated assessment panels. Broader flags and
+scoring-rule controls remain in the [parity gap inventory](../developer/clan-parity.md).
+Command descriptions below describe the analyses available through this surface.
+
+CLAN analysis runs in `chatter-clan-lsp`, a composed Rust server linking
+Chatter's editor library and the `talkbank-clan` analysis library. Select its
+binary with `talkbank.lsp.binaryPath`, or use a VSIX that bundles it. The server
+advertises the available commands and required prompts. The core editor RPCs
+remain owned by Chatter. Library differences and historical audit snapshots are tracked in the
+[chatter-clan parity record](https://talkbank.github.io/chatter-clan/parity-status.html).
 
 ## All commands
 
@@ -29,7 +38,7 @@ Analysis...** or the Command Palette. See
 | **freqpos** | Frequency | Frequency broken down by part-of-speech from `%mor` tier | `%mor` tier | Analyzing grammatical category distribution (e.g., noun-to-verb ratio) |
 | **ipsyn** | Profiling | Index of Productive Syntax -- 56 or 100-item structural checklist | `%mor` tier; English only | Assessing range of syntactic structures in child language |
 | **keymap** | Coding | Keyword-based contingency mapping between coded events | Input: keyword codes | Studying temporal relationships between coded behaviors |
-| **kideval** | Assessment | Child language evaluation with age-normed comparison. Panel auto-detects language and activity from file headers. | -- | Clinical assessment comparing a child to typically developing peers |
+| **kideval** | Assessment | Child-language measures with installed-database selection. Language/activity selection is manual. | -- | Language profiling with the default-scoring and database-qualification limits above |
 | **kwal** | Search | Keyword-in-context search -- finds utterances containing target words | Input: keywords | Finding all instances of a target word with surrounding context |
 | **maxwd** | Frequency | Longest words per speaker | -- | Checking lexical sophistication or spotting transcription errors |
 | **mlt** | Profiling | Mean Length of Turn -- utterances and words per conversational turn | Multi-speaker file | Measuring conversational participation and verbosity |

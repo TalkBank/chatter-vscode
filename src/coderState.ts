@@ -5,8 +5,6 @@
  * invocations without depending on module-level mutable globals.
  */
 
-/* eslint-disable @typescript-eslint/naming-convention */
-
 import { Context } from 'effect';
 
 import type { CodeNode } from './coderModel';
@@ -58,9 +56,7 @@ export interface CoderCommandStateStore {
 /**
  * Effect service for the persistent coder-mode store.
  */
-export const CoderCommandStateService = Context.GenericTag<CoderCommandStateStore>(
-    'talkbank/CoderCommandState',
-);
+export class CoderCommandStateService extends Context.Service<CoderCommandStateService, CoderCommandStateStore>()('talkbank/CoderCommandState') {}
 
 /**
  * Create the persistent coder state store used by the command runner.

@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/naming-convention */
 /**
  * Shared webview message contracts and decoders for VS Code panels.
  *
@@ -16,7 +15,6 @@ import {
     AvailableDatabase,
     ParticipantEntry,
     ParticipantEntryListSchema,
-    toMutableAnalysisDatabaseFilter,
 } from './lsp/executeCommandPayloads';
 import type { TimestampMs } from './utils/bulletParser';
 
@@ -251,7 +249,7 @@ export type WaveformPanelExtensionMessage = WaveformPanelHighlightSegmentMessage
 
 const WaveformPanelSeekMessageSchema = Schema.Struct({
     command: Schema.Literal('seek'),
-    ms: Schema.NonNegativeInt,
+    ms: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
 });
 
 /**
@@ -372,7 +370,13 @@ export type KidevalPanelExtensionMessage =
     | KidevalPanelFileInfoMessage
     | KidevalPanelDatabasesMessage
     | KidevalPanelResultsMessage
-    | PanelErrorMessage;
+    | AssessmentFailureMessage;
+
+export interface AssessmentFailureMessage {
+    readonly command: 'error';
+    readonly operation: 'discovery' | 'analysis' | 'export';
+    readonly message: string;
+}
 
 const KidevalPanelDiscoverDatabasesMessageSchema = Schema.Struct({
     command: Schema.Literal('discoverDatabases'),
@@ -385,11 +389,11 @@ const KidevalPanelRunAnalysisMessageSchema = Schema.Struct({
     databaseFilter: Schema.optional(AnalysisDatabaseFilterSchema),
 });
 
-const KidevalPanelWebviewMessageSchema = Schema.Union(
+const KidevalPanelWebviewMessageSchema = Schema.Union([
     KidevalPanelDiscoverDatabasesMessageSchema,
     KidevalPanelRunAnalysisMessageSchema,
     ExportCsvMessageSchema,
-);
+]);
 
 /**
  * Decode one message sent from `kidevalPanel.js` to `kidevalPanel.ts`.
@@ -408,7 +412,7 @@ export function decodeKidevalPanelWebviewMessage(
             databasePath: decoded.databasePath,
             databaseFilter: decoded.databaseFilter === undefined
                 ? undefined
-                : toMutableAnalysisDatabaseFilter(decoded.databaseFilter),
+                : decoded.databaseFilter,
         };
     }
 
@@ -450,9 +454,10 @@ export function createKidevalResultsMessage(data: unknown): KidevalPanelResultsM
 /**
  * Build an error notification for the KidEval/Eval webview.
  */
-export function createKidevalErrorMessage(message: string): PanelErrorMessage {
+export function createAssessmentFailureMessage(operation: AssessmentFailureMessage['operation'], message: string): AssessmentFailureMessage {
     return {
         command: 'error',
+        operation,
         message,
     };
 }

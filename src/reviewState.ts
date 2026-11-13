@@ -3,7 +3,7 @@
  *
  * Follows the `coderState.ts` pattern: private mutable state behind an
  * immutable snapshot interface, registered as an Effect service via
- * `Context.GenericTag`.
+ * `Context.Service`.
  */
 
 import { Context } from 'effect';
@@ -56,9 +56,7 @@ export interface ReviewCommandStateStore {
  * const snapshot = reviewState.snapshot();
  * ```
  */
-export const ReviewCommandStateService = Context.GenericTag<ReviewCommandStateStore>(
-    'talkbank/ReviewCommandState',
-);
+export class ReviewCommandStateService extends Context.Service<ReviewCommandStateService, ReviewCommandStateStore>()('talkbank/ReviewCommandState') {}
 
 // ---------------------------------------------------------------------------
 // Factory

@@ -9,7 +9,9 @@ export interface ClanIntegrationWindow {
     showErrorMessage(message: string): Awaitable<unknown>;
 }
 
-export interface ClanIntegrationDependencies extends ExtensionRuntimeServices {
+export interface ClanIntegrationDependencies {
+    readonly runtimeContext: Pick<ExtensionRuntimeServices['runtimeContext'], 'getPrimaryWorkspaceRoot'>;
+    readonly executableService: Pick<ExtensionRuntimeServices['executableService'], 'findSend2ClanBinary' | 'spawnDetached'>;
     readonly window: ClanIntegrationWindow;
 }
 
@@ -44,7 +46,7 @@ export class ClanIntegration {
             );
             if (!send2clanBinary) {
                 await this.dependencies.window.showErrorMessage(
-                    'send2clan binary not found. Please build the project: cargo build -p send2clan-sys'
+                    'Install send2clan from Chatter and ensure it is on PATH.'
                 );
                 return;
             }

@@ -5,8 +5,6 @@
  * module-level mutable variables in individual command files.
  */
 
-/* eslint-disable @typescript-eslint/naming-convention */
-
 import { Context } from 'effect';
 
 import type { Segment, TimestampMs } from './utils/bulletParser';
@@ -32,9 +30,7 @@ export interface TranscriptionCommandStateStore {
 /**
  * Effect service for persistent transcription command state.
  */
-export const TranscriptionCommandStateService = Context.GenericTag<TranscriptionCommandStateStore>(
-    'talkbank/TranscriptionCommandState',
-);
+export class TranscriptionCommandStateService extends Context.Service<TranscriptionCommandStateService, TranscriptionCommandStateStore>()('talkbank/TranscriptionCommandState') {}
 
 /**
  * Per-document walker state.
@@ -58,9 +54,7 @@ export interface WalkerCommandStateStore {
 /**
  * Effect service for persistent walker command state.
  */
-export const WalkerCommandStateService = Context.GenericTag<WalkerCommandStateStore>(
-    'talkbank/WalkerCommandState',
-);
+export class WalkerCommandStateService extends Context.Service<WalkerCommandStateService, WalkerCommandStateStore>()('talkbank/WalkerCommandState') {}
 
 /**
  * Create the persistent transcription state store used by the command runner.

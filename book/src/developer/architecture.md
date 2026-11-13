@@ -1,7 +1,7 @@
 # Architecture
 
 **Status:** Current
-**Last modified:** 2026-05-29 22:31 EDT
+**Last modified:** 2026-11-13
 
 This chapter describes the internal architecture of the TalkBank CHAT VS Code extension and its backing language server. It is written for developers who want to understand or contribute to the codebase.
 
@@ -13,7 +13,7 @@ The system is split into three layers, each with a clear responsibility:
 flowchart TD
     subgraph "VS Code Extension (TypeScript)"
         Ext["extension.ts\nActivation, commands, LSP client"]
-        Panels["Webview Panels\nGraph, Media, Waveform,\nAnalysis, KidEval, ID Editor"]
+        Panels["Webview Panels\nGraph, Media, Waveform,\nID Editor"]
         Commands["Effect Commands\nWalker, Coder, Review,\nTranscription, Special Chars"]
         TreeView["Validation Explorer\nTreeDataProvider"]
         Cache["Cache Manager\nStatus bar, CLI polling"]
@@ -31,7 +31,6 @@ flowchart TD
     subgraph "Core Crates (Rust)"
         Model["talkbank-model\nData types, validation,\nalignment"]
         Parser["talkbank-parser\nTree-sitter CST to AST"]
-        Clan["talkbank-clan\n33 analysis commands"]
     end
 
     Ext -->|"stdio JSON-RPC"| LSP
@@ -45,55 +44,58 @@ flowchart TD
     Features --> Model
     Align --> Model
     Graph --> Model
-    LSP --> Clan
 ```
 
 **Key principle:** the LSP server is a presentation layer. All parsing, validation, and alignment computation lives in `talkbank-model` and `talkbank-parser`. The LSP crate formats and routes that information to the VS Code client. The TypeScript extension is a thin UI layer that registers commands, manages webviews, and communicates with the LSP over stdio.
 
 ## Document Lifecycle
 
-Every `.cha` file goes through a well-defined lifecycle as it is opened, edited, and closed:
+An open document has a synchronized revision or an awaiting-replacement state.
+The revision owns its source and version. Its `Arc` identity distinguishes a
+close/reopen cycle even when the URI, text and version repeat.
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Opened: did_open(uri, text)
-    Opened --> Parsed: Parse immediately
-    Parsed --> Validated: Validate + publish diagnostics
-    Validated --> Cached: Populate all caches
-
-    Cached --> Editing: did_change(uri, text)
-    Editing --> Debouncing: Increment counter, sleep 250ms
-    Debouncing --> Editing: Superseded by newer edit
-    Debouncing --> Parsed: ID still current
-
-    Cached --> Saved: did_save(uri)
-    Saved --> Parsed: Re-validate immediately
-
-    Cached --> [*]: did_close(uri)\nRemove from all caches\nPublish empty diagnostics
+    [*] --> Synchronized: Open full text
+    Synchronized --> Synchronized: Admit complete edit batch
+    Synchronized --> AwaitingReplacement: Reject malformed ranged edit
+    AwaitingReplacement --> Synchronized: Admit full replacement
+    Synchronized --> Analysis: Analyze captured revision
+    Analysis --> Accepted: Parse and validation succeed
+    Analysis --> Invalid: Semantic validation rejects model
+    Analysis --> Recovered: Parser reports errors
+    Accepted --> Analysis: New source revision
+    Invalid --> Analysis: New source revision
+    Recovered --> Analysis: New source revision
+    Synchronized --> [*]: Close
+    AwaitingReplacement --> [*]: Close
 ```
 
-The 250ms debounce on `did_change` prevents thrashing during fast typing. When the user saves, validation runs immediately without debounce.
+Changes debounce for 250 ms. A superseded scheduled validation cannot publish
+against a newer session. Saving requests validation immediately. Invalid and
+recovered models can serve editing features for their exact source. CLAN
+analysis requires the accepted variant's retained validation proof.
 
 ## Backend State
 
-All LSP server state lives in the `Backend` struct (`backend/state.rs`). It is `Clone`-safe (everything behind `Arc`), shared across all async request handlers.
+`Backend` shares document sessions, source-bound `DocumentAnalysis` snapshots,
+pending validation identifiers and versioned-edit capability admission. Its
+thread-local language services own parser and semantic-token instances.
 
-### Caches
+One analysis owns its `ParsedRevision`, a closed accepted/invalid/recovered
+model variant and diagnostics. The accepted variant carries
+`SharedValidChatFile`, including validation policy, transcript name,
+diagnostics and completed model alignment. Consumers retain these facts
+through `DocumentSnapshot` and `ParsedFile`.
 
-| Cache | Type | Contents | Lifetime |
-|-------|------|----------|----------|
-| `documents` | `DashMap&lt;Url, String&gt;` | Raw file text | did_open to did_close |
-| `parse_trees` | `DashMap&lt;Url, Tree&gt;` | tree-sitter parse trees | Rebuilt on every edit |
-| `chat_files` | `DashMap&lt;Url, ChatFile&gt;` | Parsed model objects | Rebuilt on every edit |
-| `parse_clean` | `DashMap&lt;Url, bool&gt;` | Parse health flag | Rebuilt on every edit |
-| `validation_cache` | `DashMap&lt;Url, ValidationCache&gt;` | Errors grouped by scope | Rebuilt on validation |
-| `pending_validations` | `DashMap&lt;Url, u64&gt;` | Debounce IDs | Transient |
+### Exact-source reuse
 
-All caches use `DashMap` for lock-free concurrent reads. Parser and semantic-token generation use lazily initialized thread-local instances instead of shared mutexes.
-
-### Cache Miss Strategy
-
-Feature handlers (hover, highlights, etc.) first check the `chat_files` cache. On miss, they re-parse the document text from `documents`. This means features always work even if validation has not completed yet.
+Feature requests reuse an analysis only when its source bytes match the
+requested current source. A cache miss creates a fresh source-bound analysis.
+That temporary feature analysis currently remains local to the request.
+Debounced publication owns its separately scheduled analysis. This is a
+remaining opportunity to consolidate work while preserving session admission.
+Current features always consume a model associated with their requested bytes.
 
 ## Key Source Files
 
@@ -104,11 +106,11 @@ If you are new to the codebase, read these files in order:
 1. **`backend/state.rs`** -- the shared state struct and all caches
 2. **`backend/mod.rs`** -- how LSP requests are dispatched to handlers
 3. **`backend/documents.rs`** -- the document lifecycle (open/change/save/close)
-4. **`backend/diagnostics/validation_orchestrator.rs`** -- the validation pipeline
+4. **`backend/diagnostics/analysis.rs`** -- source-bound parsing and validation
 5. **`alignment/mod.rs`** -- how hover and highlight find alignment data
 6. **`alignment/tier_hover/main_tier.rs`** -- concrete example of a tier handler
 7. **`graph/mod.rs`** -- dependency graph DOT generation
-8. **`backend/capabilities.rs`** -- all 23 advertised LSP capabilities
+8. **`backend/capabilities.rs`** -- advertised LSP capabilities
 
 ### TypeScript (Extension)
 
@@ -203,29 +205,24 @@ The user-facing behavior is described in
 
 ## Validation Pipeline
 
-The validation pipeline is the most critical path in the server:
+`DocumentAnalysis::parse` owns one captured source revision. Tree-sitter
+applies the complete edit relative to the previous revision's owned source,
+then lowers a model for the resulting source. Parser errors produce the
+recovered variant. Successful parsing enters model validation with tier
+alignment included. That consuming transition yields shared validation
+admission or an invalid model. Diagnostics derive from the same source.
 
-```rust,ignore
-validate_and_publish(resources, uri, text, old_text?)
-  1. Parse text with TreeSitterParser -> ChatFile + Vec<ParseError> + Tree
-  2. Run model validation (ChatFile::validate()) -> Vec<ParseError>
-  3. Convert ParseError -> lsp_types::Diagnostic
-     - Map Span to LSP Range
-     - Map severity to DiagnosticSeverity
-     - Set error code, source ("talkbank")
-     - Attach related_information (context pointers)
-  4. Build ValidationCache (grouped by scope)
-  5. Update all backend caches
-  6. Publish diagnostics via client.publish_diagnostics()
-```
+Response admission subsequently compares the current document session.
+Retained snapshot validation survives while the snapshot is held. Presenting
+its result still requires the current-session observation.
 
 ## Performance Notes
 
 ### Edit debounce
 
 A 250 ms debounce on `did_change` trades responsiveness against CPU usage.
-For large files, parsing + validation can take 10-50 ms, so 250 ms
-prevents thrashing on fast typing while keeping diagnostics near-live.
+Measure parsing, lowering, validation and diagnostic conversion separately
+when changing that interval or qualifying large-file responsiveness.
 Saves bypass the debounce and validate immediately.
 
 ### `DashMap` vs thread-local services
@@ -246,12 +243,10 @@ implemented and are not on the critical path.
 
 ### Validation Explorer vs per-file validation
 
-The Validation Explorer shells out to the `chatter` CLI, which uses
-crossbeam workers for fully parallel corpus-scale validation. This is
-intentionally separate from the LSP: the LSP handles per-file
-validation on every edit; the CLI handles bulk validation across
-thousands of files. Keeping these two paths separate avoids burning
-the LSP loop on multi-second corpus scans.
+The Validation Explorer invokes the CLI through an executable and argument
+vector. It visits selected files sequentially and observes cancellation between
+files. Each file's JSONL result must retain its requested path and a complete
+terminal summary. The LSP supplies unsaved-buffer diagnostics independently.
 
 ## Webview Panels
 
@@ -289,28 +284,151 @@ documented explicitly in [Webview Message Contracts](../reference/webview-contra
 and why the validation tree remains a native `TreeDataProvider` instead of
 being reimplemented as another webview.
 
-## Analysis Pipeline
+## Composed analysis server
 
-The analysis pipeline illustrates the full flow from user action to rendered output:
+The extension connects to `chatter-clan-lsp` for both core editor features and
+CLAN library analysis. Chatter owns parsing, validation and document sessions.
+The downstream composition owns scheduling, command admission and result
+provenance. The extension owns prompts, cancellation and presentation.
 
 ```mermaid
-flowchart LR
-    user["User\nright-click > Run Analysis"]
-    pick["QuickPick\n(33 commands)"]
-    lsp["LSP Request\ntalkbank/analyze"]
-    runner["AnalysisRunner\n(talkbank-clan crate)"]
-    json["JSON result"]
-    panel["AnalysisPanel\nWebview"]
-    table["HTML tables\n+ stat cards\n+ bar charts"]
-
-    user --> pick --> lsp --> runner --> json --> panel --> table
+flowchart TD
+    editor[VS Code extension] --> rpc[Composed stdio server]
+    rpc --> core[talkbank-lsp]
+    rpc --> clan[talkbank-clan]
+    core --> model[Shared CHAT model and validation]
+    clan --> model
+    core --> admitted[Revision-bound shared model admission]
+    admitted --> clan
+    clan --> response[Analysis result with source identities]
+    response --> current[Client presentation admission]
+    current --> panel[Analysis or assessment panel]
 ```
 
-No per-command renderer is needed -- the `AnalysisPanel` renders JSON results generically as section headings, key-value fields, and tables.
+One request-level permit bounds analysis workers. Cancellation travels with the
+request, while the worker retains its permit until completion. Directory
+analysis discovers once, admits one file at a time and shares the library's
+filtering and aggregation traversal. An editor result carries the exact open
+session through server response admission and client presentation admission.
+
+## Effect 4 and runtime ownership
+
+The extension uses Effect 4.1 with TypeScript 7 and VS Code 1.146. Effect 4
+rewrote its runtime and Schema implementation, reduced its dependency surface
+and introduced a three-year minimum support policy. Its published bundle,
+throughput and memory measurements describe the upstream benchmarks. Extension
+measurements require our own packaged workload. [Effect 4 release](https://effect.website/blog/releases/effect/40)
+
+Each injected capability has a distinct class-based `Context.Service`
+identifier. The effect environment contains service identifiers, while the
+provided implementation retains its own payload type. Commands access services
+with `yield*`, keeping their dependency graph explicit. [Service migration](https://github.com/Effect-TS/effect/blob/main/migration/services.md)
+
+Activation constructs one `ManagedRuntime` for the command layer. Separate
+commands reuse its admitted services and stores. Deactivation disposes that
+runtime before stopping the language client. A future resource-acquiring layer
+inherits the same scope. Independent `Effect.provide` calls can build separate
+layers. Sharing follows the enclosing runtime and its memo map. [Layer memoization](https://github.com/Effect-TS/effect/blob/main/migration/layer-memoization.md)
+
+```mermaid
+flowchart TD
+    activation[Extension activation] --> layer[Shared services and command stores]
+    layer --> runtime[ManagedRuntime]
+    runtime --> command[Command or panel effect]
+    command --> observed[Captured editor or unknown RPC payload]
+    observed --> admission[Pure editor admission or Schema.Decoder]
+    admission --> outcome[Typed value or Result failure]
+    outcome --> presentation[Current-session presentation admission]
+    presentation --> ui[Native UI or webview]
+    runtime --> disposal[Deactivation disposes scope]
+    disposal --> stop[Stop language client]
+```
+
+Boundary helpers accept `Schema.Decoder<A>`, carrying only the decoding
+capability they need. Synchronous admission uses `decodeUnknownExit` and retains
+structured failure details. `Effect.result` supplies the closed `Result<A, E>`
+success/error type directly. CHAT-editor admission adds a private brand after
+checking the observed language identifier. The captured editor then flows into
+the command. [Schema migration](https://github.com/Effect-TS/effect/blob/main/migration/schema.md)
+
+Effect 4 also includes native schema-derived property generation and shrinking.
+Review existing fast-check properties against that API during their test audit,
+including replay semantics and whether the property survives stronger types.
+The current retained fast-check tests continue to own their existing generators.
+[Property-generation migration](https://github.com/Effect-TS/effect/blob/main/migration/schema.md#migrating-from-the-fast-check-bridge-to-native-arbitrary)
+
+Effect 4.1 adds crypto services, glob matching and an unstable streaming CSV
+module. Streaming CSV is a possible future fit for measured large exports.
+The present panels export already-computed result tables. Dependency upkeep should assess their ownership and measured workload. [Effect 4.1 release](https://effect.website/blog/releases/effect/41)
+
+## Prepared analysis presentation
+
+The RPC result admits a JSON object before presentation. `AnalysisPresentation`
+has a private constructor and produces scalar-only table rows. Preparation
+visits nested report records once, retains each nested path, and computes
+column kinds and numeric maxima alongside the rows. The browser consumes these
+artifacts for rendering and complete CSV export. It traverses the prepared rows
+for export, including rows outside the bounded visual preview. The shared `injectPanelScript` owner covers analysis, assessment, graph, media
+and waveform payloads. Its closed variants require the appropriate globals.
+It escapes less-than characters in serialized JSON and inserts through a
+replacement callback, preserving literal dollar tokens and script delimiters.
+
+```mermaid
+flowchart TD
+    wire[Unknown RPC result] --> json[Schema JSON admission]
+    json --> current[Current-session admission]
+    current --> prepared[AnalysisPresentation]
+    prepared --> rows[Scalar rows and nested report paths]
+    prepared --> columns[Column kinds and maxima]
+    rows --> preview[Bounded table preview]
+    columns --> preview
+    rows --> csv[Complete CSV export]
+    columns --> csv
+```
+
+## Startup and native CLI admission
+
+Activation progresses through inactive, client-started and running session
+variants. The running variant owns both the language client and command
+runtime. Startup failure releases the caller-owned file watcher. Feature setup
+failure rolls back registered disposables and stops the client. Deactivation
+exchanges the session for inactive before disposing the runtime, then stops the
+client even if runtime cleanup fails. The cache UI has a private constructor
+and exposes a started manager with one owned refresh schedule.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Inactive
+    Inactive --> ClientStarted: Await successful client start
+    ClientStarted --> Running: Own command runtime and registrations
+    ClientStarted --> Inactive: Roll back failed setup
+    Running --> Inactive: Dispose runtime then stop client
+```
+
+Native CLI calls carry an executable and an argument vector directly to
+`execFileSync`. The OS adapter admits captured nonzero-exit stdout into
+`CliExitError`. Single-file validation may consume exit-one JSONL, requiring
+exact source identity and a complete terminal summary. Its result union carries
+only fields legal for that verdict. Cache JSON uses the current tagged schema,
+including storage absence. Cache mutation stays with Chatter's CLI owner.
+
+Assessment failures carry their originating operation. An analysis failure
+re-enables analysis controls. A discovery failure ends the loading state and
+identifies the library-directory correction and reopen route. Error text is
+rendered as text content.
+
+## Dependency qualification
+
+The locked `vscode-languageclient` 11 release requests minimatch 10. The scoped
+npm override selects minimatch 11.0.8, which includes the glob-parts amplification
+fix. Reassess the override when the language client accepts a patched version
+itself. Node 24 supports the patched package's runtime requirement. Production
+bundling and the native editor journeys qualify the resulting dependency graph.
+[Upstream advisory](https://github.com/isaacs/minimatch/security/advisories/GHSA-g3hv-75wg-m249)
 
 ## Related Chapters
 
 - [LSP Protocol](lsp-protocol.md) -- all advertised capabilities
 - [Adding Features](adding-features.md) -- step-by-step guide to adding new LSP features
-- [Custom Commands](custom-commands.md) -- the 12 non-standard LSP commands
+- [Custom Commands](custom-commands.md) -- the nine editor RPCs
 - [Testing](testing.md) -- how to test the server and extension

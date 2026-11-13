@@ -1,371 +1,110 @@
-/**
- * Tests for shared utility functions.
- *
- * Following TDD methodology - tests written before implementation.
- */
-
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+/** Search policy uses typed metadata observations, with native path semantics. */
+import { describe, it, expect } from 'vitest';
 import * as fc from 'fast-check';
-import { createMockFileSystem, createMockExecSync } from './mocks/childProcess';
+import * as path from 'node:path';
+import { ExecutableService } from '../executableService';
+import { findProjectRoot, type ProjectLocatorOptions, type ProjectSearchResult } from '../utils/projectLocator';
 
-// Will be implemented in src/utils/cliLocator.ts
-import { findTalkBankCli, CliLocatorOptions } from '../utils/cliLocator';
-import { findProjectRoot, ProjectSearchResult } from '../utils/projectLocator';
+function observedFiles(paths: readonly string[]): NonNullable<ProjectLocatorOptions['fs']> {
+    const files = new Set(paths);
+    return { existsSync: candidate => files.has(candidate) };
+}
 
-describe('findTalkBankCli', () => {
-    let mockFs: any;
-    let mockExecSync: any;
+type PathLookup = { readonly kind: 'found'; readonly path: string } | { readonly kind: 'missing' };
 
-    beforeEach(() => {
-        // Reset mocks before each test
-        vi.clearAllMocks();
-    });
-
-    afterEach(() => {
-        // Restore mocks
-        vi.restoreAllMocks();
-    });
-
-    it('should find chatter in debug directory when it exists', async () => {
-        // Arrange
-        mockFs = createMockFileSystem({
-            '/project/target/debug/chatter': 'binary'
-        });
-
-        const options: CliLocatorOptions = {
-            projectRoot: '/project',
-            fs: mockFs
-        };
-
-        // Act
-        const result = await findTalkBankCli(options);
-
-        // Assert
-        expect(result).toBe('/project/target/debug/chatter');
-        expect(mockFs.existsSync).toHaveBeenCalledWith('/project/target/debug/chatter');
-    });
-
-    it('should find chatter in release directory when debug does not exist', async () => {
-        // Arrange
-        mockFs = createMockFileSystem({
-            '/project/target/release/chatter': 'binary'
-        });
-
-        const options: CliLocatorOptions = {
-            projectRoot: '/project',
-            fs: mockFs
-        };
-
-        // Act
-        const result = await findTalkBankCli(options);
-
-        // Assert
-        expect(result).toBe('/project/target/release/chatter');
-        expect(mockFs.existsSync).toHaveBeenCalledWith('/project/target/debug/chatter');
-        expect(mockFs.existsSync).toHaveBeenCalledWith('/project/target/release/chatter');
-    });
-
-    it('should fall back to PATH when not found in project', async () => {
-        // Arrange
-        mockFs = createMockFileSystem({});
-        mockExecSync = createMockExecSync({
-            stdout: '/usr/local/bin/chatter\n'
-        });
-
-        const options: CliLocatorOptions = {
-            projectRoot: '/project',
-            fs: mockFs,
-            execSync: mockExecSync
-        };
-
-        // Act
-        const result = await findTalkBankCli(options);
-
-        // Assert
-        expect(result).toBe('/usr/local/bin/chatter');
-        expect(mockExecSync).toHaveBeenCalledWith(
-            'which chatter',
-            expect.objectContaining({ encoding: 'utf-8' })
-        );
-    });
-
-    it('should return null when chatter is not found anywhere', async () => {
-        // Arrange
-        mockFs = createMockFileSystem({});
-        mockExecSync = createMockExecSync({
-            shouldThrow: true,
-            errorMessage: 'Command failed: which chatter',
-            exitCode: 1
-        });
-
-        const options: CliLocatorOptions = {
-            projectRoot: '/project',
-            fs: mockFs,
-            execSync: mockExecSync
-        };
-
-        // Act
-        const result = await findTalkBankCli(options);
-
-        // Assert
-        expect(result).toBeNull();
-    });
-
-    it('should handle undefined projectRoot', async () => {
-        // Arrange
-        mockExecSync = createMockExecSync({
-            stdout: '/usr/local/bin/chatter\n'
-        });
-
-        const options: CliLocatorOptions = {
-            projectRoot: undefined,
-            execSync: mockExecSync
-        };
-
-        // Act
-        const result = await findTalkBankCli(options);
-
-        // Assert
-        expect(result).toBe('/usr/local/bin/chatter');
-    });
-
-    it('should prefer debug over release build', async () => {
-        // Arrange - both debug and release exist
-        mockFs = createMockFileSystem({
-            '/project/target/debug/chatter': 'debug-binary',
-            '/project/target/release/chatter': 'release-binary'
-        });
-
-        const options: CliLocatorOptions = {
-            projectRoot: '/project',
-            fs: mockFs
-        };
-
-        // Act
-        const result = await findTalkBankCli(options);
-
-        // Assert
-        expect(result).toBe('/project/target/debug/chatter');
-    });
-});
-
-describe('findProjectRoot', () => {
-    let mockFs: any;
-
-    beforeEach(() => {
-        vi.clearAllMocks();
-    });
-
-    afterEach(() => {
-        vi.restoreAllMocks();
-    });
-
-    it('should find project root in current directory', async () => {
-        // Arrange
-        mockFs = createMockFileSystem({
-            '/workspace/Cargo.toml': '[package]\nname = "test"'
-        });
-
-        const options = {
-            startPath: '/workspace',
-            fs: mockFs
-        };
-
-        // Act
-        const result = await findProjectRoot(options);
-
-        // Assert
-        expect(result.found).toBe(true);
-        expect(result.path).toBe('/workspace');
-    });
-
-    it('should traverse up to parent directories', async () => {
-        // Arrange
-        mockFs = createMockFileSystem({
-            '/workspace/project/Cargo.toml': '[package]\nname = "test"'
-        });
-
-        const options = {
-            startPath: '/workspace/project/src/subdir',
-            fs: mockFs
-        };
-
-        // Act
-        const result = await findProjectRoot(options);
-
-        // Assert
-        expect(result.found).toBe(true);
-        expect(result.path).toBe('/workspace/project');
-    });
-
-    it('should respect max depth limit', async () => {
-        // Arrange
-        mockFs = createMockFileSystem({
-            '/Cargo.toml': '[package]\nname = "test"'
-        });
-
-        const options = {
-            startPath: '/a/b/c/d/e/f/g/h/i/j/k',
-            fs: mockFs,
-            maxDepth: 5
-        };
-
-        // Act
-        const result = await findProjectRoot(options);
-
-        // Assert
-        expect(result.found).toBe(false);
-        expect(result.path).toBeNull();
-    });
-
-    it('should return not found when no Cargo.toml exists', async () => {
-        // Arrange
-        mockFs = createMockFileSystem({});
-
-        const options = {
-            startPath: '/workspace',
-            fs: mockFs
-        };
-
-        // Act
-        const result = await findProjectRoot(options);
-
-        // Assert
-        expect(result.found).toBe(false);
-        expect(result.path).toBeNull();
-    });
-
-    it('should stop at filesystem root', async () => {
-        // Arrange
-        mockFs = createMockFileSystem({});
-
-        const options = {
-            startPath: '/workspace/project',
-            fs: mockFs
-        };
-
-        // Act
-        const result = await findProjectRoot(options);
-
-        // Assert
-        expect(result.found).toBe(false);
-        expect(result.path).toBeNull();
-    });
-
-    it('should use default max depth of 10', async () => {
-        // Arrange
-        mockFs = createMockFileSystem({
-            '/Cargo.toml': '[package]'
-        });
-
-        // Mock path.dirname to track depth
-        let depth = 0;
-        const originalDirname = require('path').dirname;
-        vi.mock('path', async () => {
-            const actual = await vi.importActual('path');
-            return {
-                ...actual,
-                dirname: (p: string) => {
-                    depth++;
-                    return originalDirname(p);
-                }
-            };
-        });
-
-        const options = {
-            startPath: '/a/b/c/d/e/f/g/h/i/j/k',
-            fs: mockFs
-            // maxDepth not specified - should default to 10
-        };
-
-        // Act
-        const result = await findProjectRoot(options);
-
-        // Assert
-        expect(result.found).toBe(false);
-    });
-});
-
-describe('findProjectRoot - property-based tests', () => {
-    it('should never throw errors regardless of path', () => {
-        fc.assert(
-            fc.asyncProperty(
-                fc.string(),
-                async (randomPath) => {
-                    const mockFs = createMockFileSystem({});
-                    const options = {
-                        startPath: randomPath || '/default',
-                        fs: mockFs
-                    };
-
-                    // Should not throw
-                    const result = await findProjectRoot(options);
-
-                    // Result should always be valid
-                    expect(result).toHaveProperty('found');
-                    expect(result).toHaveProperty('path');
-                    expect(typeof result.found).toBe('boolean');
-
-                    if (result.found) {
-                        expect(typeof result.path).toBe('string');
-                    } else {
-                        expect(result.path).toBeNull();
+describe('discovery policy', () => {
+    /**
+     * Guards: CLI search selects debug, release, PATH or absence in the prescribed priority.
+     * Kind: policy
+     * Not a type: the typed executable port cannot statically select among changing file and PATH observations.
+     * State: a shared typed file-observation double and closed PATH outcomes, with no disk or child process.
+     * Concurrency: none, each case owns its observations and awaits resolution.
+     */
+    it('resolves executable observations through the shared service', async () => {
+        const root = path.resolve('/project');
+        const debug = path.join(root, 'target', 'debug', 'chatter');
+        const release = path.join(root, 'target', 'release', 'chatter');
+        const installed = path.resolve('/tools/chatter');
+        const cases: readonly {
+            readonly files: readonly string[];
+            readonly root: string | undefined;
+            readonly lookup: PathLookup;
+            readonly expected: string | null;
+        }[] = [
+            { files: [debug], root, lookup: { kind: 'missing' }, expected: debug },
+            { files: [release], root, lookup: { kind: 'missing' }, expected: release },
+            { files: [debug, release], root, lookup: { kind: 'missing' }, expected: debug },
+            { files: [], root, lookup: { kind: 'found', path: installed }, expected: installed },
+            { files: [], root: undefined, lookup: { kind: 'found', path: installed }, expected: installed },
+            { files: [], root, lookup: { kind: 'missing' }, expected: null },
+        ];
+        for (const observation of cases) {
+            const service = new ExecutableService({
+                fs: observedFiles(observation.files),
+                execFileSync: () => {
+                    switch (observation.lookup.kind) {
+                        case 'found': return `${observation.lookup.path}\n`;
+                        case 'missing': throw new Error('No PATH match');
                     }
-                }
-            ),
-            { numRuns: 50 }
-        );
+                },
+            });
+            expect(await service.findTalkBankCli({ projectRoot: observation.root })).toBe(observation.expected);
+        }
     });
 
-    it('should always find Cargo.toml when it exists in path', () => {
-        fc.assert(
-            fc.asyncProperty(
-                fc.array(fc.string().filter(s => s.length > 0 && !s.includes('/')), { minLength: 1, maxLength: 5 }),
-                async (pathSegments) => {
-                    const fullPath = '/' + pathSegments.join('/');
-                    const mockFs = createMockFileSystem({
-                        [fullPath + '/Cargo.toml']: '[package]'
-                    });
-
-                    const options = {
-                        startPath: fullPath + '/subdir',
-                        fs: mockFs
-                    };
-
-                    const result = await findProjectRoot(options);
-
-                    expect(result.found).toBe(true);
-                    expect(result.path).toBe(fullPath);
-                }
-            ),
-            { numRuns: 50 }
-        );
+    /**
+     * Guards: project discovery observes nearest ancestors, the explicit/default depth limit and filesystem root.
+     * Kind: policy
+     * Not a type: the result union rules out mismatched found/path states, while ancestor selection depends on exact file observations.
+     * State: shared typed file observations use native paths, without disk, cwd changes or module mocks.
+     * Concurrency: none, each case owns its observation set and awaits resolution.
+     */
+    it('selects an observed project root within its search bounds', async () => {
+        const root = path.parse(path.resolve('/workspace')).root;
+        const workspace = path.join(root, 'workspace');
+        const project = path.join(workspace, 'project');
+        const deep = path.join(root, ...Array.from({ length: 11 }, (_, index) => `level${index}`));
+        const absent: ProjectSearchResult = { found: false, path: null };
+        const cases: readonly {
+            readonly start: string;
+            readonly files: readonly string[];
+            readonly maxDepth?: number;
+            readonly expected: ProjectSearchResult;
+        }[] = [
+            { start: workspace, files: [path.join(workspace, 'Cargo.toml')], expected: { found: true, path: workspace } },
+            { start: path.join(project, 'src', 'subdir'), files: [path.join(project, 'Cargo.toml')], expected: { found: true, path: project } },
+            { start: deep, files: [path.join(root, 'Cargo.toml')], maxDepth: 5, expected: absent },
+            { start: workspace, files: [], expected: absent },
+            { start: root, files: [], expected: absent },
+            { start: deep, files: [path.join(root, 'Cargo.toml')], expected: absent },
+        ];
+        for (const observation of cases) {
+            expect(await findProjectRoot({
+                startPath: observation.start,
+                maxDepth: observation.maxDepth,
+                fs: observedFiles(observation.files),
+            })).toEqual(observation.expected);
+        }
     });
-});
 
-describe('findTalkBankCli - property-based tests', () => {
-    it('should never throw errors regardless of inputs', () => {
-        fc.assert(
-            fc.asyncProperty(
-                fc.option(fc.string(), { nil: undefined }),
-                async (randomRoot) => {
-                    const mockFs = createMockFileSystem({});
-                    const mockExecSync = createMockExecSync({ shouldThrow: true });
-
-                    const options: CliLocatorOptions = {
-                        projectRoot: randomRoot,
-                        fs: mockFs,
-                        execSync: mockExecSync
-                    };
-
-                    // Should not throw
-                    const result = await findTalkBankCli(options);
-
-                    // Result should be string or null
-                    expect(result === null || typeof result === 'string').toBe(true);
-                }
-            ),
-            { numRuns: 50 }
-        );
+    /**
+     * Guards: a Cargo marker in generated native ancestors is discovered at its exact directory.
+     * Kind: policy
+     * Not a type: legal segment generation removes malformed fixture setup, while native path construction and ancestor selection must preserve the observed marker location.
+     * State: generated path values and the shared typed observation double, without disk or processes.
+     * Concurrency: each asynchronous property is awaited by fast-check and by the test runner.
+     */
+    it('finds markers across generated ancestor chains', async () => {
+        await fc.assert(fc.asyncProperty(
+            fc.array(fc.stringMatching(/^[a-z][a-z0-9_-]{0,8}$/), { minLength: 1, maxLength: 5 }),
+            async segments => {
+                const root = path.parse(path.resolve('/workspace')).root;
+                const directory = path.join(root, ...segments);
+                expect(await findProjectRoot({
+                    startPath: path.join(directory, 'subdir'),
+                    fs: observedFiles([path.join(directory, 'Cargo.toml')]),
+                })).toEqual({ found: true, path: directory });
+            },
+        ), { numRuns: 50 });
     });
 });

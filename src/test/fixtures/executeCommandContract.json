@@ -1,9 +1,6 @@
 [
   "talkbank/showDependencyGraph",
   "talkbank/getAlignmentSidecar",
-  "talkbank/analyze",
-  "talkbank/kidevalDatabases",
-  "talkbank/evalDatabases",
   "talkbank/getParticipants",
   "talkbank/formatIdLine",
   "talkbank/getSpeakers",

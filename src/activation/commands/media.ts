@@ -19,12 +19,12 @@ import type { ExtensionServices } from './types';
 /**
  * Register media, waveform, and traversal commands.
  *
- * @param context - Extension activation context.
+ * @param _context - Extension activation context.
  * @param services - Shared runtime services.
  * @returns Media-related disposables.
  */
 export function registerMediaCommands(
-    context: vscode.ExtensionContext,
+    _context: vscode.ExtensionContext,
     _services: ExtensionServices,
     runner: ExtensionCommandRunner,
 ): vscode.Disposable[] {

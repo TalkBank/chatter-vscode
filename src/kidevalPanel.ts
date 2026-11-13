@@ -5,31 +5,28 @@
  * comparison. Both commands share the same UI pattern: database selector,
  * age/gender filtering, comparison table with z-scores.
  *
- * The `mode` parameter controls which LSP command is invoked and which
- * default database directory is used.
+ * The preserved mode controls presentation and the default database directory.
+ * Analysis and database discovery use the composed server's library RPCs.
  *
  * Communication is bidirectional via PostMessage:
  *   Extension → Webview: databases, results, errors, config
  *   Webview → Extension: discoverDatabases, runAnalysis
  */
 
+import { injectPanelScript, type AssessmentScriptConfig } from './webviewScript';
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { Effect } from 'effect';
-import {
-    AnalysisOptions,
-    DatabaseDiscoveryCommand,
-    ExecuteCommandServerError,
-    TalkbankExecuteCommandClient,
-} from './lsp/executeCommandClient';
+import { ClanClient, clanRequest } from './lsp/clanClient';
+import { AnalysisSelection } from './lsp/clanSelection';
+import type { AnalysisDatabaseFilter } from './lsp/executeCommandPayloads';
 import { decodePanelMessage, disposePanelResources, reuseOrCreatePanel } from './panelLifecycle';
 import {
     KidevalPanelExtensionMessage,
-    KidevalPanelRunAnalysisMessage,
+    createAssessmentFailureMessage,
     createKidevalDatabasesMessage,
-    createKidevalErrorMessage,
-    createKidevalFileInfoMessage,
     createKidevalResultsMessage,
+    createKidevalFileInfoMessage,
     decodeKidevalPanelWebviewMessage,
 } from './webviewMessageContracts';
 import { resolveWebviewPanelAssetPaths, type WebviewPanelAssetPaths } from './panelAssets';
@@ -50,35 +47,26 @@ import {
 /** Analysis mode, determines command name, lib dir, and display labels. */
 export type EvalMode = 'kideval' | 'eval' | 'evald';
 
-interface ModeConfig {
-    title: string;
-    description: string;
-    lspDiscoverCommand: DatabaseDiscoveryCommand;
-    analyzeCommand: string;
-    defaultLibDir: string;
-}
+type ModeConfig = AssessmentScriptConfig & { readonly defaultLibDir: string };
 
 const MODE_CONFIGS: Record<EvalMode, ModeConfig> = {
     kideval: {
+        analyzeCommand: 'kideval',
         title: 'Child Evaluation',
         description: 'DSS + IPSyn + MLU combined child language measures with normative database comparison',
-        lspDiscoverCommand: 'talkbank/kidevalDatabases',
-        analyzeCommand: 'kideval',
-        defaultLibDir: '/Users/Shared/CLAN/lib/kideval',
+        defaultLibDir: 'kideval',
     },
     eval: {
+        analyzeCommand: 'eval',
         title: 'Language Evaluation',
         description: 'Comprehensive morphosyntactic evaluation with normative database comparison',
-        lspDiscoverCommand: 'talkbank/evalDatabases',
-        analyzeCommand: 'eval',
-        defaultLibDir: '/Users/Shared/CLAN/lib/eval',
+        defaultLibDir: 'eval',
     },
     evald: {
+        analyzeCommand: 'eval-d',
         title: 'Dementia Evaluation',
         description: 'Language evaluation with DementiaBank normative database comparison',
-        lspDiscoverCommand: 'talkbank/evalDatabases',
-        analyzeCommand: 'eval-d',
-        defaultLibDir: '/Users/Shared/CLAN/lib/eval',
+        defaultLibDir: 'eval',
     },
 };
 
@@ -89,9 +77,9 @@ export class KidevalPanel {
     private readonly _disposables: vscode.Disposable[] = [];
     private readonly _assetPaths: WebviewPanelAssetPaths;
     private readonly _panelDependencies: WebviewPanelDependencies;
-    private readonly _mode: EvalMode;
-    private _fileUri: string;
-    private _filePath: string;
+    private _selection: Readonly<{ mode: EvalMode; fileUri: string; filePath: string }>;
+    private readonly _client: ClanClient;
+    private _analysis: { kind: 'ready' } | { kind: 'running'; cancellation: vscode.CancellationTokenSource } = { kind: 'ready' };
 
     // -----------------------------------------------------------------------
     // Static factory
@@ -102,7 +90,7 @@ export class KidevalPanel {
         runner: ExtensionCommandRunner,
         fileUri: string,
         filePath: string,
-        commands: TalkbankExecuteCommandClient,
+        commands: ClanClient,
         mode: EvalMode = 'kideval',
         dependencies: WebviewPanelDependencies = {},
     ): void {
@@ -113,8 +101,9 @@ export class KidevalPanel {
         reuseOrCreatePanel(
             KidevalPanel.currentPanel,
             currentPanel => {
-                currentPanel._fileUri = fileUri;
-                currentPanel._filePath = filePath;
+                currentPanel.cancelAnalysis();
+                currentPanel._selection = { mode, fileUri, filePath };
+                currentPanel._panel.webview.html = currentPanel._getHtml();
                 currentPanel._panel.reveal(column);
                 currentPanel._sendFileInfo();
             },
@@ -156,15 +145,14 @@ export class KidevalPanel {
         panelDependencies: WebviewPanelDependencies,
         fileUri: string,
         filePath: string,
-        commands: TalkbankExecuteCommandClient,
+        commands: ClanClient,
         mode: EvalMode,
     ) {
         this._panel = panel;
         this._assetPaths = assetPaths;
         this._panelDependencies = panelDependencies;
-        this._fileUri = fileUri;
-        this._filePath = filePath;
-        this._mode = mode;
+        this._selection = { mode, fileUri, filePath };
+        this._client = commands;
 
         this._panel.webview.html = this._getHtml();
         this._panel.onDidDispose(() => this._dispose(), null, this._disposables);
@@ -181,14 +169,15 @@ export class KidevalPanel {
                     return;
                 }
 
+                const selection = this._selection;
                 switch (msg.command) {
                     case 'discoverDatabases':
                         runPanelEffect(
                             'kideval database discovery',
                             runner,
-                            this._handleDiscoverDatabases(msg.libDir, commands),
+                            this._discoverDatabases(msg.libDir),
                             errorMessage => {
-                                this._postMessage(createKidevalErrorMessage(errorMessage));
+                                if (this._selection === selection) { this._postMessage(createAssessmentFailureMessage('discovery', errorMessage)); }
                             },
                         );
                         break;
@@ -196,9 +185,9 @@ export class KidevalPanel {
                         runPanelEffect(
                             'kideval analysis',
                             runner,
-                            this._handleRunAnalysis(msg, commands),
+                            this._runAnalysis(runner, msg.databasePath, msg.databaseFilter),
                             errorMessage => {
-                                this._postMessage(createKidevalErrorMessage(errorMessage));
+                                if (this._selection === selection) { this._postMessage(createAssessmentFailureMessage('analysis', errorMessage)); }
                             },
                         );
                         break;
@@ -208,7 +197,7 @@ export class KidevalPanel {
                             runner,
                             this._exportCsv(msg.csv),
                             errorMessage => {
-                                this._postMessage(createKidevalErrorMessage(errorMessage));
+                                if (this._selection === selection) { this._postMessage(createAssessmentFailureMessage('export', errorMessage)); }
                             },
                         );
                         break;
@@ -231,55 +220,65 @@ export class KidevalPanel {
     }
 
     private _sendFileInfo(): void {
-        const modeConfig = MODE_CONFIGS[this._mode];
-        this._panel.title = `${modeConfig.title} - ${path.basename(this._filePath)}`;
-        this._postMessage(createKidevalFileInfoMessage(path.basename(this._filePath)));
+        const modeConfig = MODE_CONFIGS[this._selection.mode];
+        this._panel.title = `${modeConfig.title} - ${path.basename(this._selection.filePath)}`;
+        this._postMessage(createKidevalFileInfoMessage(path.basename(this._selection.filePath)));
     }
 
-    private _handleDiscoverDatabases(
-        libDir: string,
-        commands: TalkbankExecuteCommandClient,
-    ): Effect.Effect<void, unknown, ExtensionCommandRequirements> {
-        const panel = this;
-        const modeConfig = MODE_CONFIGS[this._mode];
-        return Effect.gen(function*() {
-            const databases = yield* commands.discoverDatabases(
-                modeConfig.lspDiscoverCommand,
-                libDir,
-            );
-            panel._postMessage(createKidevalDatabasesMessage(databases));
+    private cancelAnalysis(): void {
+        if (this._analysis.kind === 'running') {
+            this._analysis.cancellation.cancel();
+            this._analysis.cancellation.dispose();
+        }
+        this._analysis = { kind: 'ready' };
+    }
+
+    private _discoverDatabases(directory: string): Effect.Effect<void, unknown> {
+        const selection = this._selection;
+        return Effect.map(Effect.result(this._client.databases(directory)), outcome => {
+            if (this._selection !== selection) { return; }
+            const message = outcome._tag === 'Failure'
+                ? createAssessmentFailureMessage('discovery', outcome.failure.details)
+                : createKidevalDatabasesMessage(outcome.success);
+            this._postMessage(message);
         });
     }
 
-    private _handleRunAnalysis(
-        msg: KidevalPanelRunAnalysisMessage,
-        commands: TalkbankExecuteCommandClient,
+    private _runAnalysis(
+        runner: ExtensionCommandRunner,
+        databasePath: string | undefined,
+        databaseFilter: AnalysisDatabaseFilter | undefined,
     ): Effect.Effect<void, unknown, ExtensionCommandRequirements> {
         const panel = this;
-        const modeConfig = MODE_CONFIGS[this._mode];
-        const options: AnalysisOptions = {};
-        if (msg.databasePath) {
-            options.databasePath = msg.databasePath;
-        }
-        if (msg.databaseFilter) {
-            options.databaseFilter = msg.databaseFilter;
-        }
-
         return Effect.gen(function*() {
-            const result = yield* commands.analyze(
-                modeConfig.analyzeCommand,
-                panel._fileUri,
-                options,
-            );
-
-            if (typeof result === 'string' && result.startsWith('Analysis error:')) {
-                return yield* Effect.fail(new ExecuteCommandServerError({
-                    command: 'talkbank/analyze',
-                    details: result,
-                }));
-            }
-
-            panel._postMessage(createKidevalResultsMessage(result));
+            const window = yield* VSCodeWindowService;
+            const workspace = yield* VSCodeWorkspaceService;
+            const document = workspace.textDocuments.find(item => item.uri.toString() === panel._selection.fileUri);
+            if (!document) { return yield* Effect.fail(new Error('Open the selected CHAT document before analysis.')); }
+            panel.cancelAnalysis();
+            const run = { kind: 'running' as const, cancellation: new vscode.CancellationTokenSource() };
+            panel._analysis = run;
+            const target = { kind: 'document' as const, uri: document.uri.toString(), version: document.version };
+            const command = panel._selection.mode === 'evald' ? 'eval-d' : panel._selection.mode;
+            const selection = AnalysisSelection.normative(command, databasePath, databaseFilter);
+            yield* clanRequest(() => window.withProgress({
+                location: vscode.ProgressLocation.Notification, title: `Running ${command.toUpperCase()}`, cancellable: true,
+            }, async (_progress, cancellation) => {
+                const subscription = cancellation.onCancellationRequested(() => run.cancellation.cancel());
+                try {
+                    const result = await runner.runResult(panel._client.analyze(target, selection, run.cancellation.token));
+                    if (panel._analysis !== run) { return; }
+                    if (result._tag === 'Failure') {
+                        panel._postMessage(createAssessmentFailureMessage('analysis', result.failure.details));
+                        return;
+                    }
+                    panel._postMessage(createKidevalResultsMessage(result.success.forPresentation()));
+                } finally {
+                    subscription.dispose();
+                    run.cancellation.dispose();
+                    if (panel._analysis === run) { panel._analysis = { kind: 'ready' }; }
+                }
+            }));
         });
     }
 
@@ -317,7 +316,7 @@ export class KidevalPanel {
 
     private _getHtml(): string {
         const webview = this._panel.webview;
-        const modeConfig = MODE_CONFIGS[this._mode];
+        const modeConfig = MODE_CONFIGS[this._selection.mode];
 
         let html = readWebviewPanelTemplate(this._assetPaths.htmlPath, this._panelDependencies);
 
@@ -326,12 +325,11 @@ export class KidevalPanel {
         );
 
         // Inject mode configuration so the webview JS knows its context.
-        const configScript = `<script>
-    const MODE_CONFIG = ${JSON.stringify(modeConfig)};
-</script>`;
-
-        html = html.replace('<!--INJECT_CONFIG-->', configScript);
-        html = html.replace('<!--INJECT_SCRIPT-->', `<script src="${jsUri}"></script>`);
+        const libraryDirectory = vscode.workspace.getConfiguration('talkbank').get<string>('clan.libraryDirectory');
+        const config = { ...modeConfig, defaultLibDir: libraryDirectory
+            ? path.join(libraryDirectory, modeConfig.defaultLibDir) : null };
+        html = injectPanelScript(html, { kind: 'assessment', config });
+        html = html.replace('<!--INJECT_SCRIPT-->', () => `<script src="${jsUri}"></script>`);
         return html;
     }
 
@@ -340,6 +338,7 @@ export class KidevalPanel {
     // -----------------------------------------------------------------------
 
     private _dispose(): void {
+        this.cancelAnalysis();
         disposePanelResources(this._panel, this._disposables, () => {
             KidevalPanel.currentPanel = undefined;
         });

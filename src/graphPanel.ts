@@ -1,8 +1,8 @@
+import { injectPanelScript } from './webviewScript';
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { disposePanelResources, reuseOrCreatePanel } from './panelLifecycle';
 import {
-    resolveExtensionAssetPath,
     resolveWebviewPanelAssetPaths,
     type WebviewPanelAssetPaths,
 } from './panelAssets';
@@ -34,9 +34,8 @@ export class GraphPanel {
         const column = vscode.ViewColumn.Beside;
         const assetPaths: GraphPanelAssetPaths = {
             ...resolveWebviewPanelAssetPaths(context, 'graphPanel'),
-            graphvizPath: resolveExtensionAssetPath(
-                context,
-                path.join('node_modules', '@hpcc-js', 'wasm', 'dist', 'graphviz.js'),
+            graphvizPath: context.asAbsolutePath(
+                path.join('dist', 'vendor', 'graphviz.js'),
             ),
         };
 
@@ -112,15 +111,10 @@ export class GraphPanel {
             vscode.Uri.file(this._assetPaths.graphvizPath),
         );
 
-        // Build the data injection script block.
-        const dataScript = `<script>
-    const dotSource = ${JSON.stringify(this._dotSource)};
-    const GRAPHVIZ_URI = ${JSON.stringify(graphvizUri.toString())};
-</script>`;
-
-        // Replace placeholders.
-        html = html.replace('<!--INJECT_DATA-->', dataScript);
-        html = html.replace('<!--INJECT_SCRIPT-->', `<script src="${jsUri}"></script>`);
+        html = injectPanelScript(html, {
+            kind: 'graph', dotSource: this._dotSource, graphvizUri: graphvizUri.toString(),
+        });
+        html = html.replace('<!--INJECT_SCRIPT-->', () => `<script src="${jsUri}"></script>`);
 
         return html;
     }

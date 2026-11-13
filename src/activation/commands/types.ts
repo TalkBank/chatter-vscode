@@ -1,3 +1,4 @@
+import type { ClanClient } from '../../lsp/clanClient';
 import type { LanguageClient } from 'vscode-languageclient/node';
 
 import type { CacheManager } from '../../cacheManager';
@@ -16,6 +17,8 @@ export interface ExtensionServices extends ExtensionRuntimeServices {
      * Raw language client for panels and direct LSP integrations that still need it.
      */
     client: LanguageClient;
+    /** Typed analysis connection sharing the active language client. */
+    clanClient: ClanClient;
     /**
      * Typed execute-command facade used by extension features.
      */

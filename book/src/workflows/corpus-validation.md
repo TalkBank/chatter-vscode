@@ -1,9 +1,9 @@
 # Corpus Validation
 
 **Status:** Current
-**Last updated:** 2026-03-30 13:40 EDT
+**Last updated:** 2026-11-13
 
-The Validation Explorer provides corpus-scale validation of `.cha` files directly within VS Code. Unlike CLAN, which validates one file at a time, the extension can check entire directory trees and display all errors in a navigable tree view.
+The Validation Explorer provides corpus-scale validation of `.cha` files directly within VS Code. The extension checks directory trees and displays file outcomes in a navigable tree view.
 
 ## Validation Explorer
 
@@ -18,12 +18,13 @@ The **CHAT Validation** panel appears automatically in the Explorer sidebar when
 
 Click the checkmark icon next to any `.cha` file in the Validation Explorer tree. The file is validated and its status updates:
 
+- **Not checked** -- no completed verdict is retained
 - **Green checkmark** -- the file is valid CHAT
 - **Red X with error count** (e.g., "3 errors") -- the file has validation errors
 
 ### Directory
 
-Click the double-checkmark icon next to a folder to validate all `.cha` files in that directory and its subdirectories. This runs the `chatter validate` CLI with `--format json` under the hood, using parallel workers for speed.
+Click the double-checkmark icon next to a folder to validate all `.cha` files in that directory and its subdirectories. This runs the `chatter validate` CLI with `--format json` under the hood, visiting files sequentially so cancellation can stop between files.
 
 ### Entire Workspace
 
@@ -35,9 +36,8 @@ When a file fails validation, expand it in the tree to see individual error item
 
 - The error code (e.g., E301, E501)
 - A description of the problem
-- The line number
 
-Click on any error item to jump directly to the exact line and column in the editor. The editor opens the file if it is not already open.
+Click an error item to open its file. The current CLI JSONL diagnostic records carry codes, severity and messages. Use the editor Problems panel for source-located LSP diagnostics.
 
 ## Toolbar
 
@@ -60,9 +60,9 @@ Right-click on files or directories in the Validation Explorer for additional op
 
 ## How It Works
 
-The Validation Explorer does **not** use the LSP for bulk validation. Instead, it shells out to the `chatter validate` CLI with `--format json`, parses the JSON output, and builds the tree view from the results. This design allows it to validate entire directories without loading every file into the LSP, and it benefits from the CLI's parallel validation workers (via crossbeam).
+The Validation Explorer does **not** use the LSP for bulk validation. It invokes `chatter validate --format json` through a literal executable and argument vector. Each single-file JSONL run must contain one result for the requested path and a terminal complete summary. Exit-one output retains invalid-file verdicts. Failed or incomplete attempts invalidate the earlier verdict and leave the file unchecked. Directory cancellation is observed between files.
 
-Results are cached in a SQLite database so that repeated views of the same files are instant. See [Cache Management](../configuration/cache.md) for details on the cache location and how to clear it.
+Results are cached in a SQLite database for reuse under the CLI's validation policy. See [Cache Management](../configuration/cache.md) for details on the cache location and how to clear it.
 
 ## Real-Time vs. Bulk Validation
 
@@ -71,7 +71,7 @@ The extension provides two complementary validation paths:
 | Path | Trigger | Scope | Speed |
 |------|---------|-------|-------|
 | **Real-time (LSP)** | Typing in the editor | Single open file | Instant (250ms debounce) |
-| **Bulk (CLI)** | Validation Explorer | Entire directories | Parallel, cached |
+| **Bulk (CLI)** | Validation Explorer | Entire directories | Sequential file visits, CLI cache |
 
 Real-time validation shows errors as inline squiggles and in the Problems panel as you edit. Bulk validation via the Validation Explorer gives you a corpus-wide overview. Both use the same underlying validation logic.
 

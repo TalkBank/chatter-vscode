@@ -1,51 +1,41 @@
 # Running CLAN Commands
 
-**Status:** Current
-**Last updated:** 2026-05-21 14:05 EDT
 
-The TalkBank extension includes 33 CLAN analysis commands that run
-directly inside VS Code. No external CLAN binary is needed -- all
-analysis runs inside the Rust language server.
+**Status:** Current
+**Last updated:** 2026-11-13
+
+CLAN analysis runs in `chatter-clan-lsp`, a composed Rust server linking
+Chatter's editor library and the `talkbank-clan` analysis library. Select its
+binary with `talkbank.lsp.binaryPath`, or use a VSIX that bundles it. The server
+advertises the available commands and required prompts. The core editor RPCs
+remain owned by Chatter. Command coverage and numerical parity follow the
+[chatter-clan parity record](https://talkbank.github.io/chatter-clan/parity-status.html).
 
 ## Pipeline
 
-Every analysis command, single-file or directory, follows the same
-pipeline:
-
 ```mermaid
-flowchart LR
-    u["User<br/>(context menu / Command Palette)"]
-    qp{{"QuickPick<br/>(33 commands)"}}
-    needsIn{"Command<br/>needs extra<br/>input?"}
-    inbox["Input dialog<br/>(text / file picker)"]
-    cancel[["Cancel → exit"]]
-    scope{"Single file<br/>or directory?"}
-    walk["Recursive walk<br/>(walkdir::WalkDir,<br/>talkbank-clan/framework/input.rs)"]
-    dispatch["LSP talkbank/analyze<br/>(typed request)"]
-    runner["AnalysisRunner<br/>(talkbank-clan crate)"]
-    result["JSON result<br/>(typed Response)"]
-    panel["AnalysisPanel<br/>webview"]
-
-    u --> qp
-    qp --> needsIn
-    needsIn -->|"yes (6 commands)"| inbox
-    needsIn -->|"no"| scope
-    inbox -->|"user provides"| scope
-    inbox -->|"user cancels"| cancel
-    scope -->|"single file"| dispatch
-    scope -->|"directory"| walk
-    walk --> dispatch
-    dispatch --> runner
-    runner --> result
-    result --> panel
-    panel -->|"Export CSV"| csv(["CSV file<br/>on disk"])
+sequenceDiagram
+    participant UI as Editor client
+    participant Server as Composed server
+    participant Core as Document owner
+    participant Clan as CLAN library
+    UI->>Server: clan/capabilities
+    Server-->>UI: Commands and prompts
+    UI->>Server: clan/analyze
+    Server->>Core: Capture revision
+    Core-->>Server: Shared validated model
+    Server->>Clan: Parsed input stream
+    Clan-->>Server: Typed result
+    Server->>Core: Consume completion
+    Server-->>UI: Result and source IDs
+    UI->>UI: Admit presentation
 ```
-<!-- Verified against: src/commands/analysis.ts, src/analysisPanel.ts, crates/talkbank-lsp/src/backend/analysis.rs, crates/talkbank-clan/src/framework/runner.rs -->
 
-The six commands that prompt for extra input are listed below under
-[Commands that prompt for additional input](#commands-that-prompt-for-additional-input).
-Directory analysis reuses the single-file dispatch per file and
-aggregates results in the panel.
+A document request uses the current unsaved buffer. A directory request discovers
+CHAT files once and streams one admitted model at a time into one aggregate.
+Open files in that population use their editor revisions. Traversal or input
+admission failures reject the request. An edit or close/reopen invalidates a
+pending editor result. Cancel through the progress notification.
 
 ## Running an analysis on a single file
 
@@ -53,15 +43,12 @@ aggregates results in the panel.
 2. Right-click anywhere in the editor and choose **Run CLAN Analysis...**,
    or open the Command Palette (`Cmd+Shift+P` / `Ctrl+Shift+P`) and
    select **TalkBank: Run CLAN Analysis**.
-3. A QuickPick list appears with all 33 commands. Each entry shows
-   a short description of what the command computes.
+3. A QuickPick list shows the commands advertised by the selected server.
 4. Select a command. If the command requires additional input (see below),
    a follow-up dialog appears.
 5. Results open in a styled side panel with stat cards, tables, and
    proportional bar charts.
 
-> **(SCREENSHOT: Context menu showing "Run CLAN Analysis..." and "Run KidEval..." entries)**
-> *Capture this: right-click in an open .cha file to show the full context menu with CLAN analysis options*
 
 ## Running an analysis on a directory
 
@@ -89,8 +76,6 @@ Results display in a WebviewPanel with several presentation elements:
 - **Proportional bar charts** for visual comparison of values across
   speakers or categories.
 
-> **(SCREENSHOT: Analysis panel showing FREQ results with stat cards at top and frequency table below)**
-> *Capture this: run FREQ on a multi-speaker .cha file, showing the stat cards and word frequency table*
 
 ## Exporting results as CSV
 
@@ -107,7 +92,7 @@ results from multiple files and combine them in a spreadsheet.
 
 ## Commands that prompt for additional input
 
-Six commands require information beyond the `.cha` file itself.
+The following commands require information beyond the `.cha` file itself.
 After selecting one of these commands, a follow-up dialog appears:
 
 | Command | Input type | What to provide |
@@ -129,9 +114,6 @@ location on disk.
   analysis option. This is faster than running the command file by file.
 - **Compare speakers** within a single file: most commands (FREQ, MLU,
   MLT, VOCD) break results out per speaker automatically.
-- **Combine with speaker filtering**: use
-  [Speaker Filtering](../navigation/speaker-filtering.md) first to
-  focus on specific participants, then run an analysis.
 - **Save CSV exports** with consistent naming conventions for
   longitudinal data collection (e.g., `CHI_freq_session01.csv`).
 
@@ -140,4 +122,4 @@ location on disk.
 - [Profiling Commands](profiling.md) -- MLU, MLT, VOCD, DSS, IPSyn
 - [Frequency & Distribution](frequency.md) -- FREQ, WDLEN, MAXWD, and more
 - [Assessment Tools](assessment.md) -- KidEval, Eval, Eval-D
-- [Command Reference](command-reference.md) -- all 33 commands in one table
+- [Command Reference](command-reference.md) -- the analysis commands in one table

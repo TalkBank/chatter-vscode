@@ -7,11 +7,14 @@
  * module re-exports these names for backward compatibility.
  */
 
-/* eslint-disable @typescript-eslint/naming-convention */
-
 import { Data } from 'effect';
 import { StructuredPayloadDecodeError } from '../effectBoundary';
 import type { TalkbankExecuteCommandName } from './executeCommandClient';
+
+/** CLAN analysis is disabled while its independent integration is maintained. */
+export class ClanAnalysisUnavailable extends Data.TaggedError('ClanAnalysisUnavailable')<{
+    readonly details: string;
+}> {}
 
 /**
  * Tagged error for one failed `workspace/executeCommand` transport request.

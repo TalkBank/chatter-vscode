@@ -7,7 +7,6 @@
  * consumers do not need to change their import paths.
  */
 
-/* eslint-disable @typescript-eslint/naming-convention */
 
 import { Schema } from 'effect';
 
@@ -119,23 +118,23 @@ export type MediaPanelExtensionMessage =
 
 const MediaPanelSegmentChangedMessageSchema = Schema.Struct({
     command: Schema.Literal('segmentChanged'),
-    index: Schema.NonNegativeInt,
+    index: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
 });
 
 const MediaPanelTimestampMessageSchema = Schema.Struct({
     command: Schema.Literal('timestamp'),
-    ms: Schema.NonNegativeInt,
+    ms: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
 });
 
 const MediaPanelStoppedMessageSchema = Schema.Struct({
     command: Schema.Literal('stopped'),
 });
 
-const MediaPanelWebviewMessageSchema = Schema.Union(
+const MediaPanelWebviewMessageSchema = Schema.Union([
     MediaPanelSegmentChangedMessageSchema,
     MediaPanelTimestampMessageSchema,
     MediaPanelStoppedMessageSchema,
-);
+]);
 
 function toTimestampMs(value: number): TimestampMs {
     return value as TimestampMs;

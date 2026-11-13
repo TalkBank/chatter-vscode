@@ -187,7 +187,7 @@ function requestTimestamp(
     panel: MediaPanel,
     transcriptionState: import('../mediaCommandState').TranscriptionCommandStateStore,
 ): Effect.Effect<TimestampMs> {
-    return Effect.async<TimestampMs>((resume) => {
+    return Effect.callback<TimestampMs>((resume) => {
         const disposable = panel.onNextMessage((message) => {
             if (message.command === 'timestamp') {
                 clearTimeout(timeout);

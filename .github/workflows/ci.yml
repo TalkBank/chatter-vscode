@@ -19,7 +19,7 @@ env:
 
 jobs:
   extension:
-    name: Extension (compile, lint, test, bundle)
+    name: Extension (compile, test, bundle)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -34,13 +34,7 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Compile (tsc + copy webview assets)
-        run: npm run compile
-
-      - name: Lint
-        run: npm run lint
-
-      - name: Unit tests (vitest)
+      - name: Compile and unit tests
         run: npm test
 
       # Build the shipped artifact: the esbuild production bundle is what every

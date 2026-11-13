@@ -146,37 +146,13 @@ required. You can export the graph as SVG or PNG using the toolbar buttons.
 
 ---
 
-## Run a CLAN Analysis Command
+## CLAN Analysis Availability
 
-Right-click anywhere in the editor to open the context menu. Under
-**TalkBank: Analysis**, select **Run CLAN Analysis...**
-
-A QuickPick menu appears listing all 33 CLAN analysis commands with one-line
-descriptions. Select **freq** (word frequency counts).
-
-The results appear in a styled panel with stat cards, tables, and bar charts.
-You can export the results to CSV using the "Export CSV" button for use in
-spreadsheets or statistical software.
-
-Other commonly used commands:
-
-| Command | What It Does |
-|---------|-------------|
-| `freq` | Word frequency counts |
-| `mlu` | Mean length of utterance |
-| `mlt` | Mean length of turn |
-| `dss` | Developmental Sentence Score |
-| `kideval` | Compare against normative databases |
-| `vocd` | Vocabulary diversity |
-
-Commands that need extra input (keywords, file paths) prompt you before
-running. You can also run analysis on an entire directory by right-clicking a
-folder in the Explorer sidebar and selecting **Run CLAN Analysis on
-Directory...**
-
-> **(SCREENSHOT: CLAN analysis results panel)**
-> *Capture this: the analysis panel showing freq results -- a stat card with
-> total word count, a frequency table, and a bar chart of the top 10 words.*
+Choose **TalkBank: Run CLAN Analysis** with an open CHAT file, select **FREQ**,
+and inspect the result panel. The composed server uses your unsaved revision.
+Fix reported validation errors before retrying analysis. If capabilities are
+unavailable, select `chatter-clan-lsp` through `talkbank.lsp.binaryPath`.
+See [Running CLAN Commands](../analysis/running-commands.md).
 
 ---
 
@@ -234,7 +210,7 @@ You have now seen the core features. Here are some paths to explore further:
   with `F4` to stamp timing bullets
 - **[Coder Mode](../coder/overview.md)** -- load a codes file and step through
   uncoded utterances
-- **[Running CLAN Commands](../analysis/running-commands.md)** -- the full set
-  of 33 analysis commands
+- **[CLAN Integration Status](../developer/clan-parity.md)** -- library analysis
+  coverage and its parity record
 - **[Editing Features](../editing/validation.md)** -- validation, quick fixes,
   completion, snippets, and formatting

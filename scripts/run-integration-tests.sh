@@ -7,24 +7,26 @@
 # into server/ (so activation constructs and starts the LanguageClient), the
 # esbuild bundle (dist/extension.js), and the compiled tests (out/test/...).
 #
-# pretest:integration handles compile + bundle; this script adds the cargo
-# build and the server staging, then runs the suite. CI replicates these same
-# steps (build LSP for the runner platform, stage, then `npm run
-# test:integration`).
+# pretest:integration handles compile + bundle. Supply the exact native
+# composed server executable to qualify, built in its owning CLAN checkout or
+# extracted from a local VSIX.
 #
-# Usage:  bash scripts/run-integration-tests.sh
+# Usage: bash scripts/run-integration-tests.sh /absolute/path/to/chatter-clan-lsp
 set -euo pipefail
 
 VSCODE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-REPO_ROOT="$(cd "$VSCODE_DIR/.." && pwd)"
+if [ "$#" -ne 1 ]; then
+    echo "Usage: $0 /absolute/path/to/chatter-clan-lsp" >&2
+    exit 2
+fi
+LSP_BIN="$1"
+case "$LSP_BIN" in
+    /*) ;;
+    *) echo "error: the server path must be absolute" >&2; exit 2 ;;
+esac
+[ -x "$LSP_BIN" ] || { echo "error: executable not found at $LSP_BIN" >&2; exit 1; }
 
-echo "==> Building talkbank-lsp (debug)"
-cargo build -p talkbank-lsp --manifest-path "$REPO_ROOT/Cargo.toml"
-
-LSP_BIN="$REPO_ROOT/target/debug/talkbank-lsp"
-[ -x "$LSP_BIN" ] || { echo "error: talkbank-lsp not found at $LSP_BIN" >&2; exit 1; }
-
-echo "==> Staging the server binary into vscode/server/"
+echo "==> Staging the selected server binary"
 node "$VSCODE_DIR/scripts/prepare-server.mjs" --source "$LSP_BIN"
 
 echo "==> Running host-integration tests (downloads VS Code on first run)"

@@ -1,195 +1,95 @@
 import { describe, expect, it, vi } from 'vitest';
-
-const showErrorMessageMock = vi.fn();
-const executeCommandMock = vi.fn();
-
-vi.mock('vscode', () => ({
-    DiagnosticSeverity: {
-        Error: 0,
-        Warning: 1,
-        Information: 2,
-    },
-    window: {
-        showErrorMessage: (...args: unknown[]) => showErrorMessageMock(...args),
-    },
-    commands: {
-        executeCommand: (...args: unknown[]) => executeCommandMock(...args),
-    },
+import type { FileSystemWatcher } from 'vscode';
+import { extensionPaths } from './mocks/childProcess';
+const showErrorMessage = vi.fn();
+const executeCommand = vi.fn();
+vi.mock('vscode', () => ({ DiagnosticSeverity: { Error: 0, Warning: 1, Information: 2 },
+    window: { showErrorMessage: (...args: unknown[]) => showErrorMessage(...args) },
+    commands: { executeCommand: (...args: unknown[]) => executeCommand(...args) },
 }));
+vi.mock('vscode-languageclient/node', () => ({ LanguageClient: class {} }));
+import { activateLanguageServer, filterDiagnosticsBySeverity, type LanguageServerActivationServices, type LanguageClientLifecycle } from '../activation/lsp';
 
-vi.mock('vscode-languageclient/node', () => ({
-    LanguageClient: class {},
-    TransportKind: {
-        stdio: 0,
-    },
-}));
-
-import {
-    activateLanguageServer,
-    createLanguageClientOptions,
-} from '../activation/lsp';
-import type { ExtensionExecutableService } from '../runtimeServices';
-import type { ExtensionRuntimeContext, ValidationSeverity } from '../runtimeContext';
-
-function createRuntimeContext(overrides: Partial<ExtensionRuntimeContext> = {}): ExtensionRuntimeContext {
-    return {
-        getPrimaryWorkspaceRoot: () => '/workspace',
-        getConfiguredLspBinaryPath: () => '',
-        getInlayHintsEnabled: () => true,
-        getValidationSeverity: () => 'all',
-        getBulletDisplayMode: () => 'dim',
-        getWalkerAutoPlay: () => true,
-        getWalkerLoopCount: () => 1,
-        getWalkerPauseSeconds: () => 0,
-        getWalkerWalkLength: () => 0,
-        getMediaDefaultSpeed: () => 100,
-        getTranscriptionDefaultSpeaker: () => 'CHI',
-        getTranscriptionRewindSeconds: () => 2,
-        getCachePath: () => '/cache/talkbank-cache.db',
-        ...overrides,
-    };
+function watcherDouble(): FileSystemWatcher {
+    const event: FileSystemWatcher['onDidCreate'] = () => ({ dispose() {} });
+    return { ignoreCreateEvents: false, ignoreChangeEvents: false, ignoreDeleteEvents: false,
+        onDidCreate: event, onDidChange: event, onDidDelete: event, dispose: vi.fn() };
 }
 
-function createExecutableService(
-    overrides: Partial<ExtensionExecutableService> = {},
-): ExtensionExecutableService {
-    return {
-        findTalkBankCli: vi.fn(async () => null),
-        runTalkBankCli: vi.fn(() => ''),
-        findSend2ClanBinary: vi.fn(async () => null),
-        spawnDetached: vi.fn(),
-        findTalkbankLspBinary: vi.fn(() => '/tmp/chatter'),
-        ...overrides,
-    };
+function observations(binary: string | null, watcher: FileSystemWatcher): LanguageServerActivationServices {
+    return { executableService: { findTalkbankLspBinary: () => binary },
+        runtimeContext: { getConfiguredLspBinaryPath: () => '/configured/lsp', getInlayHintsEnabled: () => true, getValidationSeverity: () => 'all' },
+        workspace: { createFileSystemWatcher: () => watcher } };
 }
 
 describe('LSP activation', () => {
-    it('builds middleware from the injected runtime context', () => {
-        let severity: ValidationSeverity = 'errorsOnly';
-        let inlayHintsEnabled = true;
-        const nextDiagnostics = vi.fn();
-        const nextInlayHints = vi.fn(() => ['hint']);
-        const uri = { path: '/workspace/sample.cha' } as never;
-        const diagnostics = [
-            { severity: 0, label: 'error' },
-            { severity: 1, label: 'warning' },
-            { severity: 2, label: 'info' },
-        ];
-
-        const options = createLanguageClientOptions({
-            workspace: {
-                createFileSystemWatcher: vi.fn(() => 'watcher' as never),
-            },
-            runtimeContext: createRuntimeContext({
-                getValidationSeverity: () => severity,
-                getInlayHintsEnabled: () => inlayHintsEnabled,
-            }),
-        });
-
-        options.middleware?.handleDiagnostics?.(uri, diagnostics as never, nextDiagnostics);
-        expect(nextDiagnostics).toHaveBeenLastCalledWith(uri, [diagnostics[0]]);
-
-        severity = 'errorsAndWarnings';
-        options.middleware?.handleDiagnostics?.(uri, diagnostics as never, nextDiagnostics);
-        expect(nextDiagnostics).toHaveBeenLastCalledWith(uri, [diagnostics[0], diagnostics[1]]);
-
-        inlayHintsEnabled = false;
-        expect(options.middleware?.provideInlayHints?.(
-            {} as never,
-            {} as never,
-            {} as never,
-            nextInlayHints as never,
-        )).toEqual([]);
-        expect(nextInlayHints).not.toHaveBeenCalled();
+    /**
+     * Guards: diagnostic filtering preserves only the requested severity observations in original order.
+     * Kind: policy
+     * Not a type: the severity union excludes unsupported settings, while the user-selected filtering policy determines which real diagnostics remain visible.
+     * State: pure severity values, without fabricated editor documents, URIs or middleware calls.
+     * Concurrency: none.
+     */
+    it('filters diagnostic observations according to current policy', () => {
+        const diagnostics = [{ severity: 0, label: 'error' }, { severity: 1, label: 'warning' }, { severity: 2, label: 'info' }, { severity: 3, label: 'hint' }, { label: 'unspecified' }];
+        expect(filterDiagnosticsBySeverity(diagnostics, 'errorsOnly')).toEqual(diagnostics.slice(0, 1));
+        expect(filterDiagnosticsBySeverity(diagnostics, 'errorsAndWarnings')).toEqual(diagnostics.slice(0, 2));
+        expect(filterDiagnosticsBySeverity(diagnostics, 'all')).toEqual(diagnostics);
+        expect(filterDiagnosticsBySeverity(Object.freeze(diagnostics), 'all')).not.toBe(diagnostics);
+        for (const mode of ['all', 'errorsOnly', 'errorsAndWarnings'] as const) {
+            expect(filterDiagnosticsBySeverity([], mode)).toEqual([]);
+        }
     });
 
-    it('activates the language client through injected services', async () => {
-        const createLanguageClient = vi.fn(() => ({
-            start: vi.fn(),
-        } as never));
-        const executableService = createExecutableService({
-            findTalkbankLspBinary: vi.fn(() => '/tmp/custom-talkbank-lsp'),
-        });
-        const workspace = {
-            createFileSystemWatcher: vi.fn(() => 'watcher' as never),
-        };
-        const runtimeContext = createRuntimeContext({
-            getConfiguredLspBinaryPath: () => '/tmp/configured-talkbank-lsp',
-        });
-        const context = {
-            asAbsolutePath: (relativePath: string) => `/extension/${relativePath}`,
-        } as never;
-
-        const client = await activateLanguageServer(context, {
-            executableService,
-            runtimeContext,
-            workspace,
-            createLanguageClient,
-        });
-
-        expect(executableService.findTalkbankLspBinary).toHaveBeenCalledWith(
-            context,
-            '/tmp/configured-talkbank-lsp',
-        );
-        expect(createLanguageClient).toHaveBeenCalledWith(
-            'talkbank-lsp',
-            'TalkBank Language Server',
-            expect.objectContaining({
-                run: expect.objectContaining({
-                    command: '/tmp/custom-talkbank-lsp',
-                    args: [],
-                }),
-                debug: expect.objectContaining({
-                    command: '/tmp/custom-talkbank-lsp',
-                    args: [],
-                }),
-            }),
-            expect.objectContaining({
-                synchronize: {
-                    fileEvents: 'watcher',
-                },
-            }),
-        );
-        expect((client as any).start).toHaveBeenCalled();
+    /**
+     * Guards: startup transfers a live watcher to extension ownership and failed startup stops the client and releases the watcher.
+     * Kind: contract
+     * Not a type: the narrow lifecycle port excludes incomplete fake clients, while real startup can reject after allocating external resources.
+     * State: typed watcher and lifecycle effect doubles model only start, stop and disposal, without a server or filesystem watcher.
+     * Concurrency: each startup promise settles before its ownership assertions.
+     */
+    it('transfers resources only after successful startup', async () => {
+        for (const startup of ['ready', 'failure'] as const) {
+            const watcher = watcherDouble();
+            const context = { ...extensionPaths, subscriptions: [] as { dispose(): void }[] };
+            const client: LanguageClientLifecycle = { start: vi.fn(async () => { if (startup === 'failure') { throw new Error('Start failed'); } }), stop: vi.fn(async () => {}) };
+            const factory = vi.fn(() => client);
+            const pending = activateLanguageServer(context, { ...observations('/tools/lsp', watcher), createLanguageClient: factory });
+            if (startup === 'failure') {
+                await expect(pending).rejects.toThrow('Start failed');
+                expect(client.stop).toHaveBeenCalledOnce();
+                expect(watcher.dispose).toHaveBeenCalledOnce();
+                expect(context.subscriptions).toEqual([]);
+            } else {
+                expect(await pending).toBe(client);
+                expect(context.subscriptions).toEqual([watcher]);
+                expect(watcher.dispose).not.toHaveBeenCalled();
+                watcher.dispose();
+            }
+            expect(factory).toHaveBeenCalledWith('talkbank-lsp', 'TalkBank Language Server', { command: '/tools/lsp', args: [] },
+                expect.objectContaining({ synchronize: { fileEvents: watcher }, initializationOptions: { inlayHintsEnabled: true } }));
+        }
     });
 
-    it('surfaces an actionable error and skips client.start when the binary is missing', async () => {
-        showErrorMessageMock.mockReset();
-        executeCommandMock.mockReset();
-        showErrorMessageMock.mockResolvedValueOnce('Open Settings');
-
-        const clientStart = vi.fn();
-        const createLanguageClient = vi.fn(() => ({
-            start: clientStart,
-        } as never));
-        const executableService = createExecutableService({
-            findTalkbankLspBinary: vi.fn(() => null),
-        });
-        const workspace = {
-            createFileSystemWatcher: vi.fn(() => 'watcher' as never),
-        };
-        const runtimeContext = createRuntimeContext();
-        const context = {
-            asAbsolutePath: (relativePath: string) => `/extension/${relativePath}`,
-        } as never;
-
-        const result = await activateLanguageServer(context, {
-            executableService,
-            runtimeContext,
-            workspace,
-            createLanguageClient,
-        });
-
-        expect(result).toBeUndefined();
-        expect(clientStart).not.toHaveBeenCalled();
-        expect(createLanguageClient).not.toHaveBeenCalled();
-        expect(showErrorMessageMock).toHaveBeenCalledTimes(1);
-        const [message, ...actions] = showErrorMessageMock.mock.calls[0];
-        expect(String(message)).toContain('talkbank-lsp');
-        expect(actions).toContain('Open Settings');
-        expect(executeCommandMock).toHaveBeenCalledWith(
-            'workbench.action.openSettings',
-            'talkbank.lsp.binaryPath',
-        );
+    /**
+     * Guards: missing executable discovery offers the exact settings action without allocating a watcher or client.
+     * Kind: contract
+     * Not a type: the missing-path observation prevents startup admission, while the native UI action remains an external effect.
+     * State: narrow discovery, watcher and lifecycle doubles plus per-test dialog observations, without native resources.
+     * Concurrency: the dialog and settings action are awaited before checking effects.
+     */
+    it('offers settings when no executable is available', async () => {
+        showErrorMessage.mockReset().mockResolvedValueOnce('Open Settings');
+        executeCommand.mockReset();
+        const watcher = watcherDouble();
+        const services = observations(null, watcher);
+        const factory = vi.fn(() => ({ start: async () => {}, stop: async () => {} }));
+        const createFileSystemWatcher = vi.fn(services.workspace.createFileSystemWatcher);
+        expect(await activateLanguageServer({ ...extensionPaths, subscriptions: [] }, {
+            ...services, workspace: { createFileSystemWatcher }, createLanguageClient: factory,
+        })).toBeUndefined();
+        expect(factory).not.toHaveBeenCalled();
+        expect(createFileSystemWatcher).not.toHaveBeenCalled();
+        expect(executeCommand).toHaveBeenCalledWith('workbench.action.openSettings', 'talkbank.lsp.binaryPath');
     });
 });

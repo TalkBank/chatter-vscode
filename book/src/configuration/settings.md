@@ -70,3 +70,10 @@ This is useful when different corpora need different configurations. For example
 - [Keyboard Shortcuts](keyboard-shortcuts.md) -- keybinding customization
 - [Cache Management](cache.md) -- cache location and clearing
 - [Troubleshooting: Common Issues](../troubleshooting/common-issues.md) -- resolving configuration problems
+
+## CLAN normative databases
+
+Set `talkbank.clan.libraryDirectory` to your local CLAN `lib` directory. Assessment
+panels discover databases in its `kideval` or `eval` subdirectory. Leaving it
+empty keeps **Run without Database** available. Reopen the panel after changing
+this setting. The selected composed server reads those files on its own host.

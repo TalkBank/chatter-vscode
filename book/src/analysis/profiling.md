@@ -1,5 +1,6 @@
 # Profiling Commands
 
+
 **Status:** Current
 **Last updated:** 2026-05-21 14:25 EDT
 
@@ -36,8 +37,8 @@ via the morphotag command) before running MLU.
 
 **Tip:** MLU is most meaningful for children in Brown's Stages I--V
 (roughly MLU 1.0 to 4.5). Beyond MLU 4.5, it becomes less sensitive
-to development. For older children, consider [DSS](#dss----developmental-sentence-scoring)
-or [IPSyn](#ipsyn----index-of-productive-syntax) instead.
+to development. For older children, consider [DSS](#dss--developmental-sentence-scoring)
+or [IPSyn](#ipsyn--index-of-productive-syntax) instead.
 
 ## MLT -- Mean Length of Turn
 
@@ -178,4 +179,4 @@ is longer, only the first 100 contribute to the score. This is by design
 - [Frequency & Distribution](frequency.md) -- word counts and distributions
 - [Assessment Tools](assessment.md) -- compare profiling results against
   normative databases with KidEval
-- [Command Reference](command-reference.md) -- all 33 commands
+- [Command Reference](command-reference.md) -- the analysis commands

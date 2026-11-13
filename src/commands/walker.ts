@@ -45,10 +45,6 @@ export function walkerStep(
             state = yield* Effect.sync(() => walkerState.initialize(docUri, segments));
         }
 
-        if (!state) {
-            return yield* Effect.dieMessage('Walker state unavailable after initialization');
-        }
-
         if (state.segments.length === 0) {
             return yield* Effect.fail(new NoBulletMarkersError());
         }

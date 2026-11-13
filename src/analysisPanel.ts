@@ -4,13 +4,16 @@
  * VS Code WebviewPanel for displaying CLAN analysis results (freq, mlu, mlt, etc.).
  * Follows the same singleton-panel pattern as GraphPanel.
  *
- * Renders arbitrary JSON output from `chatter analyze <cmd> --format json`
+ * Renders admitted JSON results from the composed CLAN library
  * as a styled HTML table without requiring per-command renderers.
  */
 
+import { injectPanelScript } from './webviewScript';
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { Effect } from 'effect';
+import { Effect, type Schema } from 'effect';
+import { AnalysisPresentation } from './analysisPresentation';
+import type { ClanCommand } from './lsp/clanClient';
 import { decodePanelMessage, disposePanelResources, reuseOrCreatePanel } from './panelLifecycle';
 import { resolveWebviewPanelAssetPaths, type WebviewPanelAssetPaths } from './panelAssets';
 import {
@@ -29,7 +32,7 @@ import {
 import { tryAsync } from './effectRuntime';
 
 /** CLAN analysis command name branded type, prevents mixing with other strings. */
-export type AnalysisCommandName = string & { readonly __brand: 'AnalysisCommandName' };
+export type AnalysisCommandName = ClanCommand['command'];
 
 export class AnalysisPanel {
     public static currentPanel: AnalysisPanel | undefined;
@@ -54,7 +57,7 @@ export class AnalysisPanel {
     public static createOrShow(
         context: vscode.ExtensionContext,
         runner: ExtensionCommandRunner,
-        json: unknown,
+        json: Schema.JsonObject,
         cmdName: AnalysisCommandName,
         fileName: string,
         dependencies: WebviewPanelDependencies = {},
@@ -103,7 +106,7 @@ export class AnalysisPanel {
         runner: ExtensionCommandRunner,
         assetPaths: WebviewPanelAssetPaths,
         panelDependencies: WebviewPanelDependencies,
-        json: unknown,
+        json: Schema.JsonObject,
         cmdName: AnalysisCommandName,
         fileName: string,
     ) {
@@ -175,7 +178,7 @@ export class AnalysisPanel {
     // Private helpers
     // -----------------------------------------------------------------------
 
-    private _update(json: unknown, cmdName: AnalysisCommandName, fileName: string): void {
+    private _update(json: Schema.JsonObject, cmdName: AnalysisCommandName, fileName: string): void {
         this._panel.title = `Analysis - ${cmdName} - ${path.basename(fileName)}`;
         this._panel.webview.html = this._getHtmlForWebview(json, cmdName, fileName);
     }
@@ -183,14 +186,10 @@ export class AnalysisPanel {
     /**
      * Generates the webview HTML.
      *
-     * Rendering strategy (generic, no per-command renderer needed):
-     *  - If the JSON top-level value is an array of objects → one <table>.
-     *  - If the JSON top-level value is an object → each key becomes a section
-     *    heading. Arrays of objects under a key become <table> elements;
-     *    primitive values are shown as key=value pairs.
-     *  - Other types (string, number, …) → rendered as preformatted text.
+     * One typed preparation separates nested records into scalar tables and
+     * carries complete rows, column kinds and maxima to rendering and export.
      */
-    private _getHtmlForWebview(json: unknown, cmdName: AnalysisCommandName, fileName: string): string {
+    private _getHtmlForWebview(json: Schema.JsonObject, cmdName: AnalysisCommandName, fileName: string): string {
         const webview = this._panel.webview;
 
         // Read the HTML template from disk.
@@ -201,16 +200,11 @@ export class AnalysisPanel {
             vscode.Uri.file(this._assetPaths.scriptPath),
         );
 
-        // Build the data injection script block.
-        const dataScript = `<script>
-    const DATA      = ${JSON.stringify(json)};
-    const CMD_NAME  = ${JSON.stringify(cmdName)};
-    const FILE_NAME = ${JSON.stringify(path.basename(fileName))};
-</script>`;
-
-        // Replace placeholders.
-        html = html.replace('<!--INJECT_DATA-->', dataScript);
-        html = html.replace('<!--INJECT_SCRIPT-->', `<script src="${jsUri}"></script>`);
+        html = injectPanelScript(html, {
+            kind: 'analysis', presentation: AnalysisPresentation.prepare(json),
+            command: cmdName, fileName: path.basename(fileName),
+        });
+        html = html.replace('<!--INJECT_SCRIPT-->', () => `<script src="${jsUri}"></script>`);
 
         return html;
     }

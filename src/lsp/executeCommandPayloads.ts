@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/naming-convention */
 /**
  * Structured execute-command payload types and runtime decoders.
  *
@@ -182,66 +181,7 @@ export interface UtteranceInfo {
 /**
  * Demographic filter payload used for database-backed analyses.
  */
-export interface AnalysisDatabaseFilter {
-    language?: string;
-    group?: string;
-    gender?: 'Male' | 'Female' | 'Both';
-    age_from_months?: number;
-    age_to_months?: number;
-    speaker_codes?: string[];
-}
-
-/**
- * Typed `talkbank/analyze` option bag passed through to the server.
- */
-export interface AnalysisOptions {
-    mor?: boolean;
-    words?: boolean;
-    mainTier?: boolean;
-    limit?: number;
-    keywords?: string[];
-    search?: string[];
-    maxDepth?: number;
-    tier?: string;
-    threshold?: number;
-    maxUtterances?: number;
-    databasePath?: string;
-    databaseFilter?: AnalysisDatabaseFilter;
-    syllableMode?: boolean;
-    dssMaxUtterances?: number;
-    ipsynMaxUtterances?: number;
-    scriptPath?: string;
-    secondFile?: string;
-    templatePath?: string;
-    minUtterances?: number;
-    tier1?: string;
-    tier2?: string;
-    sortByFrequency?: boolean;
-}
-
-/**
- * Canonical object payload sent to the `talkbank/analyze` execute-command.
- */
-export interface AnalyzeCommandRequest {
-    commandName: string;
-    targetUri: string;
-    options: AnalysisOptions;
-}
-
-/**
- * Build the canonical `talkbank/analyze` request object.
- */
-export function buildAnalyzeCommandRequest(
-    commandName: string,
-    targetUri: string,
-    options: AnalysisOptions = {},
-): AnalyzeCommandRequest {
-    return {
-        commandName,
-        targetUri,
-        options,
-    };
-}
+export type AnalysisDatabaseFilter = Schema.Schema.Type<typeof AnalysisDatabaseFilterSchema>;
 
 /**
  * One normative database discovered from a CLAN library directory.
@@ -307,10 +247,10 @@ const DependencyGraphUnavailableSchema = Schema.Struct({
     reason: Schema.String,
 });
 
-export const DependencyGraphResponseSchema = Schema.Union(
+export const DependencyGraphResponseSchema = Schema.Union([
     DependencyGraphDotSchema,
     DependencyGraphUnavailableSchema,
-);
+]);
 
 const SpeakerInfoSchema = Schema.Struct({
     code: Schema.String,
@@ -334,16 +274,16 @@ const IdLineFieldsSchema = Schema.Struct({
 });
 
 const ParticipantEntrySchema = Schema.Struct({
-    line: Schema.NonNegativeInt,
+    line: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
     fields: IdLineFieldsSchema,
 });
 
 export const ParticipantEntryListSchema = Schema.Array(ParticipantEntrySchema);
 
 const ScopedFindMatchSchema = Schema.Struct({
-    line: Schema.NonNegativeInt,
-    character: Schema.NonNegativeInt,
-    length: Schema.NonNegativeInt,
+    line: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+    character: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+    length: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
     tier: Schema.String,
     speaker: Schema.String,
     line_text: Schema.String,
@@ -357,26 +297,26 @@ const FormattedBulletLineSchema = Schema.Struct({
 });
 
 const UtteranceInfoSchema = Schema.Struct({
-    line: Schema.NonNegativeInt,
+    line: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
     speaker: Schema.String,
     has_cod: Schema.Boolean,
 });
 
 const UtteranceInfoListSchema = Schema.Array(UtteranceInfoSchema);
 
-const AnalysisDatabaseGenderSchema = Schema.Union(
+const AnalysisDatabaseGenderSchema = Schema.Union([
     Schema.Literal('Male'),
     Schema.Literal('Female'),
     Schema.Literal('Both'),
-);
+]);
 
 export const AnalysisDatabaseFilterSchema = Schema.Struct({
     language: Schema.optional(Schema.String),
     group: Schema.optional(Schema.String),
     gender: Schema.optional(AnalysisDatabaseGenderSchema),
-    age_from_months: Schema.optional(Schema.NonNegativeInt),
-    age_to_months: Schema.optional(Schema.NonNegativeInt),
-    speaker_codes: Schema.optional(Schema.Array(Schema.String)),
+    age_from_months: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0), Schema.isLessThanOrEqualTo(0xffff_ffff)).pipe(Schema.brand('AgeInMonths'))),
+    age_to_months: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0), Schema.isLessThanOrEqualTo(0xffff_ffff)).pipe(Schema.brand('AgeInMonths'))),
+    speaker_codes: Schema.optional(Schema.NonEmptyArray(Schema.String)),
 });
 
 const AvailableDatabaseSchema = Schema.Struct({
@@ -389,8 +329,8 @@ const AvailableDatabaseSchema = Schema.Struct({
 const AvailableDatabaseListSchema = Schema.Array(AvailableDatabaseSchema);
 
 const LspPositionSchema = Schema.Struct({
-    line: Schema.NonNegativeInt,
-    character: Schema.NonNegativeInt,
+    line: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+    character: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
 });
 
 const LspRangeSchema = Schema.Struct({
@@ -399,39 +339,26 @@ const LspRangeSchema = Schema.Struct({
 });
 
 const SidecarTimingSchema = Schema.Struct({
-    start_ms: Schema.NonNegativeInt,
-    end_ms: Schema.NonNegativeInt,
+    start_ms: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+    end_ms: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
     skip: Schema.Boolean,
 });
 
 const AlignmentSidecarUtteranceSchema = Schema.Struct({
-    utterance_index: Schema.NonNegativeInt,
+    utterance_index: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
     speaker: Schema.String,
     range: Schema.NullOr(LspRangeSchema),
     timing: Schema.NullOr(SidecarTimingSchema),
 });
 
 const AlignmentSidecarEnvelopeSchema = Schema.Struct({
-    schema_version: Schema.NonNegativeInt,
+    schema_version: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
     uri: Schema.String,
     utterances: Schema.Array(Schema.Unknown),
 });
 
-type AnalysisDatabaseFilterLike = Omit<AnalysisDatabaseFilter, 'speaker_codes'> & {
-    readonly speaker_codes?: readonly string[];
-};
-
 function toMutableArray<item>(items: readonly item[]): item[] {
     return [...items];
-}
-
-export function toMutableAnalysisDatabaseFilter(
-    filter: AnalysisDatabaseFilterLike,
-): AnalysisDatabaseFilter {
-    return {
-        ...filter,
-        speaker_codes: filter.speaker_codes === undefined ? undefined : [...filter.speaker_codes],
-    };
 }
 
 /**
@@ -535,7 +462,7 @@ export function parseAnalysisDatabaseFilter(
     payload: unknown,
 ): AnalysisDatabaseFilter | undefined {
     const parsed = parseWithSchema(AnalysisDatabaseFilterSchema, payload);
-    return parsed === undefined ? undefined : toMutableAnalysisDatabaseFilter(parsed);
+    return parsed;
 }
 
 /**

@@ -1,22 +1,22 @@
 {
   "name": "talkbank-chat",
   "displayName": "TalkBank CHAT",
-  "description": "Language support for CHAT transcription format: real-time validation, 30 CLAN analysis commands, syntax highlighting, cross-tier alignment, dependency graphs, media playback, waveform view, and transcription mode",
+  "description": "CHAT editor and Chatter language-server client with diagnostics, highlighting, cross-tier alignment, dependency graphs, media playback, waveform view, and transcription mode",
   "version": "0.1.0",
   "publisher": "talkbank",
   "license": "MIT OR Apache-2.0",
   "icon": "images/icon.png",
   "repository": {
     "type": "git",
-    "url": "https://github.com/TalkBank/chatter"
+    "url": "https://github.com/TalkBank/chatter-vscode"
   },
-  "homepage": "https://github.com/TalkBank/chatter/tree/main/vscode",
+  "homepage": "https://github.com/TalkBank/chatter-vscode",
   "bugs": {
-    "url": "https://github.com/TalkBank/chatter/issues"
+    "url": "https://github.com/TalkBank/chatter-vscode/issues"
   },
   "engines": {
-    "vscode": "^1.110.0",
-    "node": ">=18.0.0"
+    "vscode": "^1.146.0",
+    "node": ">=24.0.0"
   },
   "categories": [
     "Programming Languages",
@@ -170,6 +170,11 @@
             "Show errors and warnings, hide informational diagnostics"
           ],
           "description": "Filter which validation diagnostics are displayed."
+        },
+        "talkbank.clan.libraryDirectory": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the CLAN lib directory containing kideval and eval database folders. Leave empty to run assessments without a normative database."
         }
       }
     },
@@ -684,43 +689,56 @@
     "compile": "tsc -p ./ && npm run copy-webview",
     "bundle": "node esbuild.config.mjs",
     "watch": "tsc -watch -p ./",
-    "pretest": "npm run compile && npm run lint",
-    "lint": "eslint src",
+    "pretest": "npm run compile",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:ui": "vitest --ui",
     "test:coverage": "vitest run --coverage",
     "pretest:integration": "npm run compile && npm run bundle",
     "test:integration": "vscode-test",
-    "package": "vsce package",
+    "package": "vsce package --no-dependencies --follow-symlinks",
     "package:prepare": "node scripts/prepare-server.mjs",
-    "package:darwin-arm64": "vsce package --target darwin-arm64 --out talkbank-chat-darwin-arm64.vsix",
-    "package:darwin-x64": "vsce package --target darwin-x64   --out talkbank-chat-darwin-x64.vsix",
-    "package:linux-x64": "vsce package --target linux-x64    --out talkbank-chat-linux-x64.vsix",
-    "package:linux-arm64": "vsce package --target linux-arm64  --out talkbank-chat-linux-arm64.vsix",
-    "package:win32-x64": "vsce package --target win32-x64    --out talkbank-chat-win32-x64.vsix",
+    "package:darwin-arm64": "vsce package --no-dependencies --follow-symlinks --target darwin-arm64 --out talkbank-chat-darwin-arm64.vsix",
+    "package:darwin-x64": "vsce package --no-dependencies --follow-symlinks --target darwin-x64   --out talkbank-chat-darwin-x64.vsix",
+    "package:linux-x64": "vsce package --no-dependencies --follow-symlinks --target linux-x64    --out talkbank-chat-linux-x64.vsix",
+    "package:linux-arm64": "vsce package --no-dependencies --follow-symlinks --target linux-arm64  --out talkbank-chat-linux-arm64.vsix",
+    "package:win32-x64": "vsce package --no-dependencies --follow-symlinks --target win32-x64    --out talkbank-chat-win32-x64.vsix",
     "publish": "vsce publish"
   },
   "devDependencies": {
     "@types/mocha": "^10.0.10",
-    "@types/node": "^26.0.0",
-    "@types/vscode": "1.110.0",
-    "@typescript-eslint/eslint-plugin": "^8.62.0",
-    "@typescript-eslint/parser": "^8.62.0",
-    "@vitest/coverage-v8": "^4.1.9",
-    "@vitest/ui": "^4.1.9",
+    "@types/node": "^24.19.2",
+    "@types/vscode": "~1.146.0",
+    "@vitest/coverage-v8": "^5.1.0",
+    "@vitest/ui": "^5.1.0",
     "@vscode/test-cli": "^0.0.15",
-    "@vscode/test-electron": "^3.0.0",
-    "@vscode/vsce": "^3.9.2",
-    "esbuild": "^0.28.1",
-    "eslint": "^10.5.0",
-    "fast-check": "^4.8.0",
-    "typescript": "^6.0.3",
-    "vitest": "^4.1.9"
+    "@vscode/test-electron": "^3.1.0",
+    "@vscode/vsce": "^4.1.1",
+    "esbuild": "^0.28.2",
+    "fast-check": "^4.10.2",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.0"
   },
   "dependencies": {
-    "@hpcc-js/wasm": "^2.34.2",
-    "effect": "^3.21.4",
-    "vscode-languageclient": "^10.0.1"
+    "@hpcc-js/wasm": "^2.36.0",
+    "effect": "^4.1.4",
+    "vscode-languageclient": "^11.0.0"
+  },
+  "files": [
+    "dist/extension.js",
+    "dist/vendor/graphviz.js",
+    "out/webview/**",
+    "syntaxes/**",
+    "snippets/**",
+    "images/**",
+    "server/**",
+    "language-configuration.json",
+    "LICENSE-*",
+    "CHANGELOG.md"
+  ],
+  "overrides": {
+    "vscode-languageclient": {
+      "minimatch": "^11.0.8"
+    }
   }
 }

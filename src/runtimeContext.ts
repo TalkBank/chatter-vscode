@@ -1,6 +1,3 @@
-import * as os from 'os';
-import * as path from 'path';
-
 export type BulletDisplayMode = 'dim' | 'hidden' | 'normal';
 export type ValidationSeverity = 'all' | 'errorsOnly' | 'errorsAndWarnings';
 
@@ -30,12 +27,10 @@ export interface ExtensionRuntimeContext {
     getMediaDefaultSpeed(): number;
     getTranscriptionDefaultSpeaker(): string;
     getTranscriptionRewindSeconds(): number;
-    getCachePath(): string;
 }
 
 export interface DefaultExtensionRuntimeContextOptions {
     workspace?: RuntimeWorkspaceFacade;
-    homedir?: () => string;
 }
 
 const BULLET_DISPLAY_MODES: readonly BulletDisplayMode[] = [
@@ -63,10 +58,6 @@ function createEmptyWorkspace(): RuntimeWorkspaceFacade {
     };
 }
 
-export function resolveDefaultCachePath(homeDir: string): string {
-    return path.join(homeDir, '.cache', 'talkbank-chat', 'talkbank-cache.db');
-}
-
 export function normalizeBulletDisplayMode(value: string): BulletDisplayMode {
     return BULLET_DISPLAY_MODES.includes(value as BulletDisplayMode)
         ? (value as BulletDisplayMode)
@@ -81,15 +72,13 @@ export function normalizeValidationSeverity(value: string): ValidationSeverity {
 
 /**
  * Shared boundary for VS Code runtime state that would otherwise be read
- * ambiently from workspace/config/home-directory globals.
+ * from the current workspace and configuration.
  */
 export class DefaultExtensionRuntimeContext implements ExtensionRuntimeContext {
     private readonly workspace: RuntimeWorkspaceFacade;
-    private readonly homedirFn: () => string;
 
     constructor(options: DefaultExtensionRuntimeContextOptions = {}) {
         this.workspace = options.workspace ?? createEmptyWorkspace();
-        this.homedirFn = options.homedir ?? os.homedir;
     }
 
     getPrimaryWorkspaceRoot(): string | undefined {
@@ -154,7 +143,4 @@ export class DefaultExtensionRuntimeContext implements ExtensionRuntimeContext {
             .get<number>('transcription.rewindSeconds', 2);
     }
 
-    getCachePath(): string {
-        return resolveDefaultCachePath(this.homedirFn());
-    }
 }

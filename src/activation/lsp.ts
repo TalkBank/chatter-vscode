@@ -3,10 +3,7 @@
  */
 
 import * as vscode from 'vscode';
-import {
-    LanguageClient,
-    TransportKind
-} from 'vscode-languageclient/node';
+import { LanguageClient } from 'vscode-languageclient/node';
 import type {
     LanguageClientOptions,
     ServerOptions,
@@ -15,6 +12,7 @@ import {
     type ValidationSeverity,
 } from '../runtimeContext';
 import type { ExtensionRuntimeServices } from '../runtimeServices';
+import type { ExtensionPaths } from '../executableService';
 
 const LSP_BINARY_PATH_SETTING = 'talkbank.lsp.binaryPath';
 const OPEN_SETTINGS_ACTION = 'Open Settings';
@@ -26,17 +24,25 @@ export interface LanguageServerWorkspace {
     createFileSystemWatcher(globPattern: string): vscode.FileSystemWatcher;
 }
 
-export type LanguageClientFactory = (
+export interface LanguageClientLifecycle {
+    start(): Promise<void>;
+    stop(): Promise<void>;
+}
+
+export type LanguageClientFactory<Client extends LanguageClientLifecycle> = (
     id: string,
     name: string,
     serverOptions: ServerOptions,
     clientOptions: LanguageClientOptions,
-) => LanguageClient;
+) => Client;
 
-export interface LanguageServerActivationServices extends ExtensionRuntimeServices {
+export interface LanguageServerActivationServices {
+    readonly runtimeContext: Pick<ExtensionRuntimeServices['runtimeContext'], 'getConfiguredLspBinaryPath' | 'getInlayHintsEnabled' | 'getValidationSeverity'>;
+    readonly executableService: Pick<ExtensionRuntimeServices['executableService'], 'findTalkbankLspBinary'>;
     readonly workspace: LanguageServerWorkspace;
-    readonly createLanguageClient?: LanguageClientFactory;
 }
+
+type ActivationContext = ExtensionPaths & Pick<vscode.ExtensionContext, 'subscriptions'>;
 
 /**
  * Filter diagnostics according to the current runtime validation-severity setting.
@@ -63,14 +69,15 @@ export function filterDiagnosticsBySeverity<T extends { severity?: vscode.Diagno
  * Build language-client options from injected runtime services.
  */
 export function createLanguageClientOptions(
-    services: Pick<LanguageServerActivationServices, 'workspace' | 'runtimeContext'>,
+    services: Pick<LanguageServerActivationServices, 'runtimeContext'>,
+    watcher: vscode.FileSystemWatcher,
 ): LanguageClientOptions {
-    const { workspace, runtimeContext } = services;
+    const { runtimeContext } = services;
 
     return {
         documentSelector: [{ scheme: 'file', language: 'chat' }],
         synchronize: {
-            fileEvents: workspace.createFileSystemWatcher('**/*.cha')
+            fileEvents: watcher
         },
         initializationOptions: {
             inlayHintsEnabled: runtimeContext.getInlayHintsEnabled(),
@@ -105,10 +112,18 @@ export function createLanguageClientOptions(
  * @returns Started language client instance, or `undefined` when no LSP binary
  *   was discovered.
  */
-export async function activateLanguageServer(
-    context: vscode.ExtensionContext,
+export function activateLanguageServer<Client extends LanguageClientLifecycle>(
+    context: ActivationContext,
+    services: LanguageServerActivationServices & { readonly createLanguageClient: LanguageClientFactory<Client> },
+): Promise<Client | undefined>;
+export function activateLanguageServer(
+    context: ActivationContext,
     services: LanguageServerActivationServices,
-): Promise<LanguageClient | undefined> {
+): Promise<LanguageClient | undefined>;
+export async function activateLanguageServer(
+    context: ActivationContext,
+    services: LanguageServerActivationServices & { readonly createLanguageClient?: LanguageClientFactory<LanguageClientLifecycle> },
+): Promise<LanguageClientLifecycle | undefined> {
     const lspBinary = services.executableService.findTalkbankLspBinary(
         context,
         services.runtimeContext.getConfiguredLspBinaryPath(),
@@ -129,29 +144,30 @@ export async function activateLanguageServer(
 
     // The standalone `talkbank-lsp` binary takes no subcommand; it speaks LSP
     // over stdio as soon as it starts.
-    const serverArgs: string[] = [];
-    const debugOptions = { execArgv: ['--nolazy', '--inspect=6009'] };
-
     const serverOptions: ServerOptions = {
-        run: { command: lspBinary, args: serverArgs, transport: TransportKind.stdio } as any,
-        debug: {
-            command: lspBinary,
-            args: serverArgs,
-            transport: TransportKind.stdio,
-            options: debugOptions
-        } as any
+        command: lspBinary,
+        args: [],
     };
 
-    const clientOptions = createLanguageClientOptions(services);
-    const createLanguageClient =
-        services.createLanguageClient ??
-        ((id, name, server, client) => new LanguageClient(id, name, server, client));
-    const client = createLanguageClient(
-        'talkbank-lsp',
-        'TalkBank Language Server',
-        serverOptions,
-        clientOptions,
-    );
-    client.start();
+    const watcher = services.workspace.createFileSystemWatcher('**/*.cha');
+    let client: LanguageClientLifecycle;
+    try {
+        const clientOptions = createLanguageClientOptions(services, watcher);
+        const createLanguageClient = services.createLanguageClient
+            ?? ((id, name, server, options) => new LanguageClient(id, name, server, options));
+        client = createLanguageClient('talkbank-lsp', 'TalkBank Language Server', serverOptions, clientOptions);
+    } catch (error) {
+        watcher.dispose();
+        throw error;
+    }
+    try {
+        await client.start();
+    } catch (error) {
+        try { await client.stop(); }
+        finally { watcher.dispose(); }
+        throw error;
+    }
+    // Raw watchers supplied in synchronize.fileEvents remain caller-owned.
+    context.subscriptions.push(watcher);
     return client;
 }

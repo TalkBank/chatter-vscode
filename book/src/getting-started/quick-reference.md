@@ -113,13 +113,8 @@ commands. Commands are listed below organized by category.
 
 ### Analysis
 
-| Command | Description |
-|---------|-------------|
-| TalkBank: Run CLAN Analysis... | Choose from 33 CLAN commands and view results in a styled panel |
-| TalkBank: Run CLAN Analysis on Directory... | Run any CLAN command across all `.cha` files in a folder |
-| TalkBank: Run KidEval... | Compare child language measures against normative databases |
-| TalkBank: Run Eval... | General assessment normative comparison |
-| TalkBank: Run Eval-D (Dementia)... | Dementia evaluation with DementiaBank databases |
+Use Run CLAN Analysis, Run KidEval, Run Eval or Run Eval-D with the composed
+Rust server. See [Running CLAN Commands](../analysis/running-commands.md).
 
 ### Editing
 
@@ -202,11 +197,10 @@ All settings are under the `talkbank.*` namespace. Open VS Code Settings
 
 ---
 
-## CLAN Analysis Commands (33 total)
+## CLAN Analysis Catalog
 
-These commands are available via **TalkBank: Run CLAN Analysis...** in the
-Command Palette or the right-click context menu. Commands marked with an
-asterisk (*) prompt for additional input before running.
+The server advertises the available command catalog. An asterisk (*) identifies
+a command requiring additional input.
 
 ### Frequency and Length
 

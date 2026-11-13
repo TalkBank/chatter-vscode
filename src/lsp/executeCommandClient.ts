@@ -5,16 +5,10 @@
  * construct ad hoc request objects inline.
  */
 
-/* eslint-disable @typescript-eslint/naming-convention */
-
 import type * as vscode from 'vscode';
 import { Effect } from 'effect';
-import type { LanguageClient } from 'vscode-languageclient/node';
 import {
-    AnalyzeCommandRequest,
-    AnalysisOptions,
     AlignmentSidecarDocument,
-    AvailableDatabase,
     DependencyGraphResponse,
     FormattedBulletLine,
     IdLineFields,
@@ -23,8 +17,6 @@ import {
     ScopedFindRequest,
     SpeakerInfo,
     UtteranceInfo,
-    buildAnalyzeCommandRequest,
-    decodeAvailableDatabaseList,
     decodeDependencyGraphResponse,
     decodeFormattedBulletLine,
     decodeParticipantEntryList,
@@ -54,8 +46,6 @@ export type { ExecuteCommandStructuredError } from './executeCommandErrors';
 
 export type {
     AnalysisDatabaseFilter,
-    AnalyzeCommandRequest,
-    AnalysisOptions,
     AlignmentSidecarDocument,
     AvailableDatabase,
     FormattedBulletLine,
@@ -78,9 +68,6 @@ export type TalkbankExecuteCommandName = (typeof talkbankExecuteCommandList)[num
 export const talkbankExecuteCommandNames = {
     showDependencyGraph: 'talkbank/showDependencyGraph',
     getAlignmentSidecar: 'talkbank/getAlignmentSidecar',
-    analyze: 'talkbank/analyze',
-    kidevalDatabases: 'talkbank/kidevalDatabases',
-    evalDatabases: 'talkbank/evalDatabases',
     getParticipants: 'talkbank/getParticipants',
     formatIdLine: 'talkbank/formatIdLine',
     getSpeakers: 'talkbank/getSpeakers',
@@ -96,9 +83,6 @@ export const talkbankExecuteCommandNames = {
 export const talkbankExecuteCommandList = [
     talkbankExecuteCommandNames.showDependencyGraph,
     talkbankExecuteCommandNames.getAlignmentSidecar,
-    talkbankExecuteCommandNames.analyze,
-    talkbankExecuteCommandNames.kidevalDatabases,
-    talkbankExecuteCommandNames.evalDatabases,
     talkbankExecuteCommandNames.getParticipants,
     talkbankExecuteCommandNames.formatIdLine,
     talkbankExecuteCommandNames.getSpeakers,
@@ -108,12 +92,14 @@ export const talkbankExecuteCommandList = [
     talkbankExecuteCommandNames.scopedFind,
 ] as const;
 
-/**
- * Execute-command identifiers used for normative database discovery.
- */
-export type DatabaseDiscoveryCommand =
-    | typeof talkbankExecuteCommandNames.kidevalDatabases
-    | typeof talkbankExecuteCommandNames.evalDatabases;
+/** The exact transport operation used by this RPC facade. */
+export interface ExecuteCommandTransport {
+    isRunning(): boolean;
+    sendRequest(method: 'workspace/executeCommand', payload: {
+        readonly command: TalkbankExecuteCommandName;
+        readonly arguments: readonly unknown[];
+    }): Promise<unknown>;
+}
 
 /**
  * Thin typed client for TalkBank extension commands exposed through LSP.
@@ -124,7 +110,7 @@ export class TalkbankExecuteCommandClient {
      *
      * @param client - Underlying VS Code language client.
      */
-    constructor(private readonly client: LanguageClient) {}
+    constructor(private readonly client: ExecuteCommandTransport) {}
 
     /**
      * Return whether the underlying language client is running.
@@ -147,7 +133,7 @@ export class TalkbankExecuteCommandClient {
      */
     showDependencyGraph(
         uri: string,
-        position: vscode.Position,
+        position: Pick<vscode.Position, 'line' | 'character'>,
     ): Effect.Effect<DependencyGraphResponse, ExecuteCommandStructuredError> {
         return this.executeStructured(
             talkbankExecuteCommandNames.showDependencyGraph,
@@ -262,37 +248,6 @@ export class TalkbankExecuteCommandClient {
     }
 
     /**
-     * Discover normative databases available under a CLAN library directory.
-     *
-     * @param command - Discovery command to invoke.
-     * @param libraryDir - Directory containing database files.
-     * @returns Discovered database metadata entries.
-     */
-    discoverDatabases(
-        command: DatabaseDiscoveryCommand,
-        libraryDir: string,
-    ): Effect.Effect<AvailableDatabase[], ExecuteCommandStructuredError> {
-        return this.executeStructured(command, [libraryDir], decodeAvailableDatabaseList);
-    }
-
-    /**
-     * Execute one analysis command on a file or directory target.
-     *
-     * @param commandName - Analysis command identifier.
-     * @param targetUri - File or directory URI string.
-     * @param options - Command-specific options.
-     * @returns Arbitrary command result payload.
-     */
-    analyze(
-        commandName: string,
-        targetUri: string,
-        options: AnalysisOptions,
-    ): Effect.Effect<unknown, ExecuteCommandRequestError> {
-        const request: AnalyzeCommandRequest = buildAnalyzeCommandRequest(commandName, targetUri, options);
-        return this.executeRaw(talkbankExecuteCommandNames.analyze, [request]);
-    }
-
-    /**
      * Request utterance metadata used by coder mode.
      *
      * @param uri - Document URI string.
@@ -371,7 +326,7 @@ export class TalkbankExecuteCommandClient {
         args: unknown[]
     ): Effect.Effect<unknown, ExecuteCommandRequestError> {
         return Effect.mapError(
-            tryAsync(`execute ${command}`, () => this.client.sendRequest<unknown>(
+            tryAsync(`execute ${command}`, () => this.client.sendRequest(
                 'workspace/executeCommand',
                 {
                     command,

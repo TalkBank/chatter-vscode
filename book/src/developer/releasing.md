@@ -1,90 +1,83 @@
 # Releasing
 
-**Status:** Current
-**Last modified:** 2026-06-24 08:10 EDT
+**Status** Current candidate workflow, platform qualification pending
 
-This repository ships the extension as five platform-specific VSIX files,
-published as a GitHub Release by `.github/workflows/vscode-release.yml`. Each
-VSIX bundles a prebuilt `talkbank-lsp` for its target platform at
-`server/talkbank-lsp[.exe]`, so the installed extension needs no PATH binary and
-no Rust toolchain on the user's machine.
+The release workflow builds `chatter-clan-lsp` from the exact
+`CLAN_SERVER_REVISION` in `.github/workflows/vscode-release.yml`. That downstream
+binary links both Rust libraries and consumes its Chatter dependency at the
+full revision in the CLAN workspace lockfile. Each VSIX stages the executable at
+`server/talkbank-lsp[.exe]` for the extension's existing binary locator.
 
-> **Repo status.** `TalkBank/chatter-vscode` is currently a dormant,
-> resumable repository (the extension was paused on 2026-06-15). The release
-> machinery below is complete and ready, but no public VSIX channel is being
-> actively promoted yet. Treat this chapter as the packaging runbook; cutting an
-> actual public release is a maintainer decision.
+## Publication order
 
-## Where the language server comes from
+1. Qualify and publish the selected Chatter commit.
+2. Qualify and publish the CLAN commit consuming that exact revision.
+3. Set the extension workflow's full CLAN commit and qualify the native VSIXes.
+4. With publication approval, create the extension version tag. Its workflow
+   publishes the five platform assets after every package job succeeds.
 
-The extension no longer builds `talkbank-lsp` itself. The server is a
-first-class, code-signed release artifact of the **chatter** project, and the
-release workflow downloads the matching per-platform binary from a pinned
-chatter release:
+A local dependency in Cargo's Git cache can qualify local source integration.
+A clean hosted build requires both public commits to be reachable. Record these
+as separate outcomes. The candidate workflow is held until its pins are published
+and platform runs have passed.
 
-- The pinned version lives in `vscode-release.yml` as `CHATTER_LSP_VERSION`
-  (currently `v0.18.0`).
-- Each VSIX target maps to a chatter Rust target, for example
-  `darwin-arm64` to `talkbank-lsp-aarch64-apple-darwin.tar.xz`.
-- To adopt a newer language server, bump `CHATTER_LSP_VERSION` and re-release.
+## Platform builds
 
-## Cutting a release
+| VSIX | Rust target | Runner |
+| --- | --- | --- |
+| darwin-arm64 | aarch64-apple-darwin | macos-15 |
+| darwin-x64 | x86_64-apple-darwin | macos-15-intel |
+| linux-x64 | x86_64-unknown-linux-musl | ubuntu-24.04 |
+| linux-arm64 | aarch64-unknown-linux-musl | ubuntu-24.04-arm |
+| win32-x64 | x86_64-pc-windows-msvc | windows-2025 |
 
-1. Bump the `version` in `package.json` (the single source of truth for the
-   extension version).
-2. Commit and push to `main`.
-3. Tag the release and push the tag:
-   ```bash
-   git tag vX.Y.Z
-   git push origin vX.Y.Z
-   ```
-4. The `package` matrix builds all five VSIX files:
-   - `darwin-arm64`, `darwin-x64`, `linux-x64`, `linux-arm64`, `win32-x64`
-5. The `release` job publishes a GitHub Release at tag `vX.Y.Z` with the five
-   VSIX assets attached.
+The manifest's `files` allowlist owns the shipped runtime assets. Esbuild
+bundles Node dependencies and copies the standalone Graphviz browser module to
+`dist/vendor/graphviz.js`. Packaging uses `--no-dependencies`, and panel names
+are a closed TypeScript union. Real package inspection owns asset presence.
 
-You can also run the workflow manually from the Actions tab
-(`workflow_dispatch`), optionally overriding which chatter release supplies
-`talkbank-lsp` via the `lsp_version` input.
+Each job builds natively and stages only its server executable. Linux jobs
+install musl tools. Manual workflow dispatch produces artifacts. A version-tag
+push also publishes them. Hosted labels follow the
+[GitHub runner reference](https://docs.github.com/en/actions/reference/runners/github-hosted-runners).
 
-## Local packaging (single platform)
+## Local qualification and packaging
 
-For a manual build targeting your current host, run from the repo root:
+From a reviewed CLAN checkout, build the composed binary.
+
+```bash
+cargo build --release --locked -p chatter-clan-lsp
+```
+
+From this extension checkout, select and qualify that executable.
 
 ```bash
 npm ci
-# Obtain a talkbank-lsp binary: download talkbank-lsp-<target> from
-#   https://github.com/TalkBank/chatter/releases/latest
-# or build it from a chatter checkout (cargo build --release -p talkbank-lsp).
-node scripts/prepare-server.mjs --source /path/to/talkbank-lsp   # add --windows for .exe
-npm run package:darwin-arm64   # or darwin-x64, linux-x64, linux-arm64, win32-x64
+bash scripts/run-integration-tests.sh /absolute/path/to/chatter-clan-lsp
+node scripts/prepare-server.mjs --source /absolute/path/to/chatter-clan-lsp
+npm run package:darwin-arm64
 ```
 
-`prepare-server.mjs` stages the binary into `server/` with the correct name
-(`talkbank-lsp` on Unix, `talkbank-lsp.exe` on Windows) so `vsce package`
-bundles it at `server/` inside the VSIX.
+Use the matching package target for your platform. Add `--windows` to the
+staging command for the Windows executable. Retain exact source and binary
+identities, host journey results and the VSIX hash. Before release, qualify the
+executable extracted from the package as well. Local native qualification does
+not establish the other platform builds.
 
-## Users installing a VSIX
+## Installation
 
-1. Obtain the VSIX matching the user's platform (OS and architecture).
-2. Install from the command line:
-   ```bash
-   code --install-extension talkbank-chat-<platform>.vsix
-   ```
+Obtain the platform-specific VSIX and install it through VS Code's **Install
+from VSIX** action or its CLI.
 
-No Rust toolchain, no PATH setup, no extra dependencies.
+```bash
+code --install-extension talkbank-chat-<platform>.vsix
+```
 
-## Version number discipline
-
-`package.json` is the single source of truth for the extension version. Do not
-hand-edit the staged `server/talkbank-lsp` binary name or the tag format; the
-release workflow derives the VSIX names from the matrix and the version from
-`package.json`. For a release candidate, append a pre-release identifier
-(`0.X.Y-rc.1`) per semver.
+The package contains the server. Local development can override it with
+`talkbank.lsp.binaryPath`. `package.json` owns the extension version.
 
 ## Related chapters
 
-- [Installation](../getting-started/installation.md): user-facing install
-- [Troubleshooting: LSP Connection](../troubleshooting/lsp.md): binary discovery order
-- [Testing](testing.md): the test gates a release must pass
-- [ADR-004: Bundled LSP binary in the VSIX](../design/adr-004-bundled-lsp-binary.md)
+- [Installation](../getting-started/installation.md)
+- [Testing](testing.md)
+- [LSP troubleshooting](../troubleshooting/lsp.md)

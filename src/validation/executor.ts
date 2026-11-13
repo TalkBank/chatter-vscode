@@ -2,7 +2,9 @@
  * Validation and cache-clear CLI execution for the validation explorer.
  */
 
-import type { TalkBankCliExecutableService } from '../executableService';
+import { CliExitError, type TalkBankCliExecutableService } from '../executableService';
+import { Schema } from 'effect';
+import * as path from 'node:path';
 import { findProjectRoot, type ProjectSearchResult } from '../utils/projectLocator';
 
 /**
@@ -13,7 +15,8 @@ export enum ValidationStatus {
     Invalid = 'invalid',
     Validating = 'validating',
     Cached = 'cached',
-    ParseError = 'parse_error',
+    Unchecked = 'unchecked',
+    InternalError = 'internal_error',
     ReadError = 'read_error'
 }
 
@@ -31,13 +34,12 @@ export interface FileValidationIssue {
 /**
  * Validation result for one CHAT file.
  */
-export interface FileValidationResult {
-    path: string;
-    status: ValidationStatus;
-    errorCount?: number;
-    isCacheHit?: boolean;
-    errors?: FileValidationIssue[];
-}
+export type FileValidationResult = { readonly path: string } & (
+    | { readonly status: ValidationStatus.Valid | ValidationStatus.Cached; readonly isCacheHit: boolean; readonly errors?: never }
+    | { readonly status: ValidationStatus.Invalid; readonly errorCount: number; readonly errors: readonly FileValidationIssue[] }
+    | { readonly status: ValidationStatus.ReadError | ValidationStatus.InternalError; readonly errors: readonly FileValidationIssue[] }
+    | { readonly status: ValidationStatus.Validating | ValidationStatus.Unchecked; readonly errors?: never }
+);
 
 /**
  * Executor configuration and test seams.
@@ -49,52 +51,45 @@ export interface ValidationExecutorOptions {
     findProjectRoot?: (options: { startPath: string }) => Promise<ProjectSearchResult>;
 }
 
-interface ValidationCliResponse {
-    status: string;
-    errors?: FileValidationIssue[];
-}
+const Diagnostic = Schema.Struct({ code: Schema.String, severity: Schema.Literals(['Error', 'Warning']), message: Schema.String });
+const FileFields = { type: Schema.Literal('file'), file: Schema.String };
+const FileRecord = Schema.Union([
+    Schema.Struct({ ...FileFields, status: Schema.Literal('valid'), cache_hit: Schema.Boolean }),
+    Schema.Struct({ ...FileFields, status: Schema.Literal('invalid'), error_count: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)), errors: Schema.Array(Diagnostic) }),
+    Schema.Struct({ ...FileFields, status: Schema.Literal('read_error'), error: Schema.String }),
+    Schema.Struct({ ...FileFields, status: Schema.Literal('internal_failure'), error: Schema.String, errors: Schema.Array(Diagnostic) }),
+]);
+const Envelope = Schema.Struct({ type: Schema.Literals(['file', 'summary', 'cache', 'notice']) });
+const CompleteSummary = Schema.Struct({ type: Schema.Literal('summary'), outcome: Schema.Literal('complete'), total_files: Schema.Literal(1) });
 
-/**
- * Convert CLI JSON output into the explorer's validation-result shape.
- */
-export function parseValidationResult(
-    filePath: string,
-    output: string
-): FileValidationResult {
-    const result = JSON.parse(output) as ValidationCliResponse;
-
-    if (result.status === 'valid') {
-        return {
-            path: filePath,
-            status: ValidationStatus.Valid,
-            isCacheHit: false
-        };
+/** Admit one completed single-file JSONL run, retaining its file provenance. */
+export function parseValidationResult(filePath: string, output: string): FileValidationResult {
+    let file: typeof FileRecord.Type | undefined;
+    let complete = false;
+    for (const line of output.trim().split(/\r?\n/)) {
+        const raw: unknown = JSON.parse(line);
+        const envelope = Schema.decodeUnknownSync(Envelope)(raw);
+        if (complete) { throw new Error('Validation record after terminal summary'); }
+        switch (envelope.type) {
+            case 'file':
+                if (file) { throw new Error('Multiple file results for one input'); }
+                file = Schema.decodeUnknownSync(FileRecord)(raw);
+                if (path.resolve(file.file) !== path.resolve(filePath)) { throw new Error('Validation source mismatch'); }
+                break;
+            case 'summary':
+                Schema.decodeUnknownSync(CompleteSummary)(raw);
+                complete = true;
+                break;
+            case 'cache': case 'notice': break;
+        }
     }
-
-    if (result.status === 'invalid') {
-        return {
-            path: filePath,
-            status: ValidationStatus.Invalid,
-            errorCount: result.errors ? result.errors.length : 0,
-            errors: result.errors || []
-        };
+    if (!file || !complete) { throw new Error('Incomplete single-file validation output'); }
+    switch (file.status) {
+        case 'valid': return { path: filePath, status: file.cache_hit ? ValidationStatus.Cached : ValidationStatus.Valid, isCacheHit: file.cache_hit };
+        case 'invalid': return { path: filePath, status: ValidationStatus.Invalid, errorCount: file.error_count, errors: file.errors };
+        case 'read_error': return { path: filePath, status: ValidationStatus.ReadError, errors: [{ code: 'read_error', severity: 'Error', message: file.error }] };
+        case 'internal_failure': return { path: filePath, status: ValidationStatus.InternalError, errors: [...file.errors, { code: 'internal_failure', severity: 'Error', message: file.error }] };
     }
-
-    if (result.status === 'parse_error') {
-        return {
-            path: filePath,
-            status: ValidationStatus.ParseError
-        };
-    }
-
-    if (result.status === 'read_error') {
-        return {
-            path: filePath,
-            status: ValidationStatus.ReadError
-        };
-    }
-
-    throw new Error(`Unknown validation status: ${result.status}`);
 }
 
 /**
@@ -120,11 +115,13 @@ export class ValidationExecutor {
      */
     async validateFile(filePath: string): Promise<FileValidationResult> {
         const cliPath = await this.resolveCliPath();
-        const output = this.executableService.runTalkBankCli(cliPath, [
-            'validate',
-            filePath,
-            '--json'
-        ]);
+        let output: string;
+        try {
+            output = this.executableService.runTalkBankCli(cliPath, ['validate', filePath, '--format', 'json']);
+        } catch (error) {
+            if (!(error instanceof CliExitError) || error.exitCode !== 1) { throw error; }
+            output = error.stdout;
+        }
         return parseValidationResult(filePath, output);
     }
 
@@ -138,7 +135,7 @@ export class ValidationExecutor {
             'clear',
             '--prefix',
             targetPath,
-            '--dry-run'
+            // Chatter defaults to a non-writing preview.
         ]);
     }
 
@@ -151,7 +148,8 @@ export class ValidationExecutor {
             'cache',
             'clear',
             '--prefix',
-            targetPath
+            targetPath,
+            '--apply'
         ]);
     }
 
@@ -184,6 +182,6 @@ export class ValidationExecutor {
             startPath: this.workspaceRoot
         });
 
-        return result.found ? result.path : null;
+        return result.path;
     }
 }
