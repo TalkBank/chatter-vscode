@@ -419,12 +419,22 @@ rendered as text content.
 
 ## Dependency qualification
 
-The locked `vscode-languageclient` 11 release requests minimatch 10. The scoped
-npm override selects minimatch 11.0.8, which includes the glob-parts amplification
-fix. Reassess the override when the language client accepts a patched version
-itself. Node 24 supports the patched package's runtime requirement. Production
-bundling and the native editor journeys qualify the resulting dependency graph.
-[Upstream advisory](https://github.com/isaacs/minimatch/security/advisories/GHSA-g3hv-75wg-m249)
+The locked graph uses npm overrides for minimatch 11.0.8, glob 14.0.6,
+diff 8.0.4 and serialize-javascript 7.1.4. These versions include fixes for
+pattern amplification, traversal cancellation, patch parsing and serialization.
+Their supported runtime ranges include Node 24. Reassess each override when
+its upstream consumers accept a patched release themselves.
+[Minimatch advisory](https://github.com/isaacs/minimatch/security/advisories/GHSA-g3hv-75wg-m249),
+[glob advisory](https://github.com/isaacs/node-glob/security/advisories/GHSA-3g3m-2fjr-6pw4),
+[diff advisory](https://github.com/kpdecker/jsdiff/security/advisories/GHSA-73rr-hh4g-fpgx),
+[serialization advisory](https://github.com/yahoo/serialize-javascript/security/advisories/GHSA-5c6j-r48x-rmvq)
+
+Dependency qualification includes `npm audit --json` over the complete installed
+lockfile graph. Record runtime and development findings explicitly. A filtered
+production audit establishes its selected scope. Unit tests, production bundling,
+packaging and native editor journeys qualify the resulting graph. Changes to
+test-runner dependencies also exercise discovery, parallel worker serialization
+and rejected-assertion reporting through the real adapter.
 
 ## Related Chapters
 

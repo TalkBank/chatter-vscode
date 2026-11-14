@@ -25,6 +25,7 @@ as a GitHub Release when a `vX.Y.Z` tag is pushed; each VSIX bundles the matchin
 
 - Restore CLAN library analysis through the downstream composed editor server.
 - Target VS Code 1.146 with TypeScript 7, Effect 4 and current dependencies.
+- Apply patched transitive dependencies throughout the runtime and development-tool graphs.
 - Own command effects in one managed runtime and enforce strict unused checks.
 - Prepare nested report tables once and export complete CSV rows.
 - Bundle the standalone Graphviz browser asset with platform-specific servers.
